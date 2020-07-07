@@ -18,6 +18,7 @@ class N10sNeo4jStore(Store):
         self.config = config
         self.inbatch = False
         self.tripleBuffer = []
+        self.bufferMaxSize = 10000
         super(N10sNeo4jStore, self).__init__(config)
         self.__namespace = {}
         self.__prefix = {}
@@ -67,6 +68,8 @@ class N10sNeo4jStore(Store):
         Store.add(self, triple, context, quoted)
         if self.inbatch:
             self.tripleBuffer.append(self.__serialise(triple))
+            if len(self.tripleBuffer)>= self.bufferMaxSize:
+                self.__flushBuffer()
         else:
             self.session.run("CALL n10s.rdf.import.inline($rdf,'N-Triples')", rdf=self.__serialise(triple))
 
@@ -141,16 +144,24 @@ class N10sNeo4jStore(Store):
         for prefix, namespace in self.__namespace.items():
             yield prefix, namespace
 
+    def __flushBuffer(self):
+        assert self.__open, "The Store must be open."
+        print("Flushing {bufferSize} buffered Triples to DB".format(bufferSize=len(self.tripleBuffer)))
+        self.session.run("CALL n10s.rdf.import.inline($rdf,'N-Triples')", rdf='\n'.join(self.tripleBuffer))
+        self.tripleBuffer = []
 
-    def startBatch(self):
+    def startBatchedWrite(self, bufferSize = 10000):
         assert self.__open, "The Store must be open."
         self.inbatch = True
-        print("start batch process. Triples will be buffered...")
+        self.bufferMaxSize = bufferSize
+        print("start batch process. Triples will be buffered and flushed in batches of {bufferSize}".format(bufferSize=bufferSize))
 
     def endBatch(self):
-        assert self.__open, "The Store must be open."
         if self.inbatch:
-            print("flushing buffered Triples to DB...")
-            self.session.run("CALL n10s.rdf.import.inline($rdf,'N-Triples')", rdf='\n'.join(self.tripleBuffer))
-            self.tripleBuffer = []
+            assert self.__open, "The Store must be open."
+            if len(self.tripleBuffer)>0:
+                self.__flushBuffer()
             self.inbatch = False
+            self.bufferMaxSize = 10000
+
+
