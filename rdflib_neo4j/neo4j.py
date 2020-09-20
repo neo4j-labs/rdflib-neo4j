@@ -97,11 +97,11 @@ class N10sNeo4jStore(Store):
         if isinstance(object, Literal):
             lang = object.language or None
             datatype = object.datatype or None
-            result = self.session.run("call n10s.rdf.export.triplePattern($spat, $ppat, $opat, $lit, $dt, $lan) "
+            result = self.session.run("call n10s.rdf.export.spo($spat, $ppat, $opat, $lit, $dt, $lan) "
                              "yield subject, predicate, object, isLiteral, literalType",
                               spat = subject, ppat = predicate,  opat = object, lit = True, dt = datatype, lan = lang)
         else:
-            result = self.session.run("call n10s.rdf.export.triplePattern($spat, $ppat, $opat) "
+            result = self.session.run("call n10s.rdf.export.spo($spat, $ppat, $opat) "
                                       "yield subject, predicate, object, isLiteral, literalType",
                                       spat=subject, ppat=predicate, opat=object)
 

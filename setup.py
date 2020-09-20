@@ -33,7 +33,7 @@ if __name__ == "__main__":
         platforms="All",
         url="https://github.com/neo4j-labs/rdflib-neo4j",
         install_requires=[
-            'rdflib >= 5.0.0','neo4j-driver >= 4.0.0',
+            'rdflib >= 5.0.0','neo4j >= 4.1.0',
         ],
         packages=['rdflib_neo4j'],
         entry_points={
