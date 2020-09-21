@@ -22,6 +22,7 @@ class N10sNeo4jStore(Store):
         super(N10sNeo4jStore, self).__init__(config)
         self.__namespace = {}
         self.__prefix = {}
+        self.__open = False
 
 
     def open(self, config, create=False):
@@ -71,7 +72,9 @@ class N10sNeo4jStore(Store):
             if len(self.tripleBuffer)>= self.bufferMaxSize:
                 self.__flushBuffer()
         else:
-            self.session.run("CALL n10s.rdf.import.inline($rdf,'N-Triples')", rdf=self.__serialise(triple))
+            result = self.session.run("CALL n10s.rdf.import.inline($rdf,'N-Triples')", rdf=self.__serialise(triple)).single()
+            if(result["terminationStatus"]) == "KO":
+                raise Exception("Could not persist triple in Neo4j: ", result["extraInfo"])
 
         #self.refreshNamespaces()
 
@@ -81,8 +84,9 @@ class N10sNeo4jStore(Store):
 
         for result in self.triples(triple):
             (spo,ctx) = result
-            self.session.run("CALL n10s.rdf.delete.inline($rdf,'N-Triples')", rdf=self.__serialise(spo))
-
+            result= self.session.run("CALL n10s.rdf.delete.inline($rdf,'N-Triples')", rdf=self.__serialise(spo)).single()
+            if (result["terminationStatus"]) == "KO":
+                raise Exception("Could not delete triple from Neo4j: ", result["extraInfo"])
 
     def refreshNamespaces(self):
         nsresults = self.session.run("call n10s.nsprefixes.list()")
@@ -128,6 +132,7 @@ class N10sNeo4jStore(Store):
         return next((x["tripleCount"] for x in result), 0)
 
     def bind(self, prefix, namespace):
+        assert self.__open, "The Store must be open."
         nsresults  = self.session.run("call n10s.nsprefixes.add($pref,$ns)", pref = prefix, ns = namespace)
         for x in nsresults:
             self.__namespace[x["prefix"]] = x["namespace"]
