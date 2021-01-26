@@ -104,4 +104,6 @@ Producing the following result (truncated):
         <http://neo4j.com/indiv#Paul_McCartney>,
         <http://neo4j.com/indiv#Ringo_Starr> ;
     <http://neo4j.com/voc/music#name> "The Beatles"^^<http://www.w3.org/2001/XMLSchema#string> .
+    
+    [...]
 ```
