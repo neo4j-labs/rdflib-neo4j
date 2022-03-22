@@ -31,8 +31,7 @@ Or you can do it manually following the [instructions in the manual](https://neo
 
 Connect to your database and either from the browser or the console, create a uniqueness constraint on Resources' uri by running the following cypher fragment:
 ```cypher
-CREATE CONSTRAINT n10s_unique_uri ON (r:Resource)
-ASSERT r.uri IS UNIQUE;
+CREATE CONSTRAINT n10s_unique_uri FOR (r:Resource) REQUIRE r.uri IS UNIQUE;
 ```
 
 * Set the configuration of the graph:
