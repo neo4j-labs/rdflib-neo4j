@@ -166,5 +166,6 @@ g.add((aura, SKOS.prefLabel, rdflib.Literal("AuraDB")))
 g.add((aura, SKOS.broader, rdflib.URIRef("http://www.wikidata.org/entity/Q1628290")))
 ```
 
-The previous fragment would add another node to the graph representing AuraDB as a concept related to Neo4j via `skos:narrower`.
+The previous fragment would add another node to the graph representing AuraDB as a concept related to Neo4j via `skos:narrower`, which in your AuraDB graph would look as follows:
 
+<img src="https://raw.githubusercontent.com/neo4j-labs/rdflib-neo4j/master/img/graph-view-aura-detail.png" height="150">
