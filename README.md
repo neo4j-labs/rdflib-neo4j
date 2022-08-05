@@ -10,7 +10,8 @@ If you're not familiar with RDFLib you can [learn more here](https://github.com/
 If you're not familiar with n10s you can [learn more here](https://neo4j.com/labs/neosemantics/). 
 
 
-## Getting Started (if you can install n10s on your DB. For AuraDB check [the following section](https://github.com/neo4j-labs/rdflib-neo4j/blob/master/README.md#getting-started-without-n10s-if-you-cannot-install-n10s-for-example-in-auradb))
+## Getting Started (if you can install n10s on your DB. For AuraDB check [the following section](https://github.com/neo4j-labs/rdflib-neo4j/blob/master/README.md#getting-started-when-you-cannot-install-n10s-for-example-in-auradb))
+
 
 Here are the steps you need to follow on your Neo4j database and on your python code:
 
