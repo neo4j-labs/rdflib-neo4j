@@ -1,14 +1,14 @@
 from rdflib.store import Store
 from rdflib import URIRef, Literal, BNode
 from neo4j import GraphDatabase
-from neo4j import WRITE_ACCESS, READ_ACCESS
+from neo4j import WRITE_ACCESS
 
 __all__ = ["N10sNeo4jStore"]
 
 class N10sNeo4jStore(Store):
 
     context_aware = False
-    formula_aware = False
+    formula_aware = True
     transaction_aware = True
     graph_aware = True
     __TRIPLE_COUNT_QUERY = "call { match (n:Resource) return sum(size(keys(n)) - 1) + sum(size(labels(n)) - 1) as ct " \
@@ -133,7 +133,11 @@ class N10sNeo4jStore(Store):
 
     def bind(self, prefix, namespace):
         assert self.__open, "The Store must be open."
-        nsresults  = self.session.run("call n10s.nsprefixes.add($pref,$ns)", pref = prefix, ns = namespace)
+        if prefix != '':
+            nsresults  = self.session.run("call n10s.nsprefixes.add($pref,$ns)", pref = prefix, ns = namespace)
+        else:
+            nsresults = []
+
         for x in nsresults:
             self.__namespace[x["prefix"]] = x["namespace"]
             self.__prefix[x["namespace"]] = x["prefix"]

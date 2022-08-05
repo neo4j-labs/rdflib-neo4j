@@ -16,19 +16,19 @@ if sys.argv[-1] == 'setup.py':
     print()
 
 if sys.version_info[:2] < (3, 6):
-    print("NetworkX Neo4j requires Python 3.6 or later (%d.%d detected)." %
+    print("Neo4j requires Python 3.6 or later (%d.%d detected)." %
           sys.version_info[:2])
     sys.exit(-1)
 
 if __name__ == "__main__":
     setup(
         name="rdflib-neo4j",
-        version="0.0.1b1",
+        version="0.0.1b2",
         author="Jesús Barrasa",
         author_email="jbarrasa@outlook.com",
-        description="RDFLib Store backed by neo4j + n10s",
+        description="RDFLib Store backed by neo4j",
         keywords="neo4j, rdflib, neosemantics, n10s",
-        long_description="RDFLib Store backed by neo4j + n10s",
+        long_description="RDFLib Store backed by neo4j",
         license="Apache 2",
         platforms="All",
         url="https://github.com/neo4j-labs/rdflib-neo4j",
@@ -38,9 +38,9 @@ if __name__ == "__main__":
         packages=['rdflib_neo4j'],
         entry_points={
             'rdf.plugins.store': [
-                'Neo4j = rdflib_neo4j.neo4j:N10sNeo4jStore',
+                'neo4j-n10s = rdflib_neo4j.neo4j:N10sNeo4jStore',
+                'neo4j-cypher = rdflib_neo4j.neo4jcypher:CypherNeo4jStore',
             ],
-        }, 
+        },
         zip_safe=False
     )
-
