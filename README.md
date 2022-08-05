@@ -1,4 +1,4 @@
-<img src="https://guides.neo4j.com/rdf/n10s.png" height="150"><img src="https://raw.githubusercontent.com/RDFLib/rdflib/master/docs/_static/RDFlib.png" height="150">
+<img src="https://guides.neo4j.com/rdf/n10s.png" height="75"> <img src="https://raw.githubusercontent.com/RDFLib/rdflib/master/docs/_static/RDFlib.png" height="75">
 
 # rdflib-neo4j
 RDFLib Store backed by neo4j + n10s
@@ -10,7 +10,7 @@ If you're not familiar with RDFLib you can [learn more here](https://github.com/
 If you're not familiar with n10s you can [learn more here](https://neo4j.com/labs/neosemantics/). 
 
 
-## Getting Started
+## Getting Started (if you can install n10s on your DB. For Aura check [the following section](#getting-started-without-n10s-if-you-cannot-install-n10s-for-example-in-aura))
 
 Here are the steps you need to follow on your Neo4j database and on your python code:
 
@@ -45,7 +45,7 @@ If you want to know more about additional config options, have a look at the [n1
 ### On the Python side
 rdflib-neo4j can be installed with Python's package management tool *pip*:
 
-    $ pip install -i https://test.pypi.org/simple/ rdflib-neo4j
+    $ pip install rdflib-neo4j
 
 
 ### You're ready to go!
@@ -57,10 +57,10 @@ You can import the data from an RDF document (for example [this one serialised u
 import rdflib
 
 # create a neo4j backed Graph
-g = rdflib.Graph(store='Neo4j')
+g = rdflib.Graph(store='neo4j-n10s')
 
 # set the configuration to connect to your Neo4j DB 
-theconfig = {'uri': "neo4j://localhost:7687", 'database': 'rdfstore', 'auth': {'user': "neo4j", 'pwd': "neo"}}
+theconfig = {'uri': "neo4j://localhost:7687", 'database': '<your_db_name>', 'auth': {'user': "neo4j", 'pwd': "<your_pwd>"}}
 
 g.open(theconfig, create = False)
 
@@ -106,3 +106,65 @@ Producing the following result (truncated):
     
     [...]
 ```
+
+## Getting Started without n10s (if you cannot install n10s. For example in [Aura](https://console.neo4j.io/))
+
+**note:** [WIP Warning!] This is a (currently) limited option that only supports RDF import.
+
+Here are the steps you need to follow on your Neo4j database and on your python code:
+
+
+### On the Neo4j side
+In order to set up your Neo4j Graph DB, all you need to do is nitialise the Database by creating a uniqueness constraint on Resources' uri by running the following cypher fragment:
+```cypher
+CREATE CONSTRAINT n10s_unique_uri FOR (r:Resource) REQUIRE r.uri IS UNIQUE;
+```
+
+### On the Python side
+rdflib-neo4j can be installed with Python's package management tool *pip*:
+
+    $ pip install rdflib-neo4j
+
+
+### You're ready to go!
+You can now import RDF data into your Aura instance by creating an RDFLib graph and using it to parse the RDF data. Every single triple will be transparently persisted in your Aura DB. Here's how:
+
+You can import the data from an RDF document (for example [this one serialised using N-Triples](https://github.com/jbarrasa/datasets/blob/master/rdf/music.nt)):
+
+```python
+from rdflib import Graph, store
+
+# create a neo4j backed Graph
+g = Graph(store='neo4j-cypher')
+
+# set the configuration to connect to your Aura DB 
+theconfig = {'uri': "neo4j+s://<your_db_id>.databases.neo4j.io", 'database': 'neo4j', 'auth': {'user': "neo4j", 'pwd': "<DB-PWD>"}}
+
+g.open(theconfig, create = False)
+
+# optional batch loading. If parse is not wrapped into start+end batch, then triples will be written to AuraDB one by one
+# performance will be significantly reduced
+g.store.startBatchedWrite()
+g.parse("https://github.com/jbarrasa/gc-2022/raw/main/search/onto/concept-scheme-skos.ttl", format="ttl")
+g.store.endBatchedWrite()
+
+```
+The imported file contains a taxonomy of technologies extracted from Wikidata and serialised using SKOS.
+After running the previous code fragment, your Aura DB should be populated with a graph like this one:
+
+<img src="https://raw.githubusercontent.com/neo4j-labs/rdflib-neo4j/master/img/graph-view-aura.png" height="400">
+
+You can also write to the graph triple by triple like this:
+
+```python
+from rdflib import RDF, SKOS
+
+aura = rdflib.URIRef("http://neo4j.com/voc/tech#AuraDB")
+
+g.add((aura, RDF.type, SKOS.Concept))
+g.add((aura, SKOS.prefLabel, rdflib.Literal("AuraDB")))
+g.add((aura, SKOS.broader, rdflib.URIRef("http://www.wikidata.org/entity/Q1628290")))
+```
+
+The previous fragment would add another node to the graph representing AuraDB as a concept related to Neo4j via `skos:narrower`.
+
