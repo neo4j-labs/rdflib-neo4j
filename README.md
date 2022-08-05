@@ -1,4 +1,4 @@
-<img src="https://guides.neo4j.com/rdf/n10s.png" height="75"> <img src="https://raw.githubusercontent.com/RDFLib/rdflib/master/docs/_static/RDFlib.png" height="75">
+<img src="https://raw.githubusercontent.com/RDFLib/rdflib/master/docs/_static/RDFlib.png" height="75"> <img src="https://guides.neo4j.com/rdf/n10s.png" height="75">
 
 # rdflib-neo4j
 RDFLib Store backed by neo4j + n10s
@@ -10,7 +10,7 @@ If you're not familiar with RDFLib you can [learn more here](https://github.com/
 If you're not familiar with n10s you can [learn more here](https://neo4j.com/labs/neosemantics/). 
 
 
-## Getting Started (if you can install n10s on your DB. For Aura check [the following section](#getting-started-without-n10s-if-you-cannot-install-n10s-for-example-in-aura))
+## Getting Started (if you can install n10s on your DB. For AuraDB check [the following section](https://github.com/neo4j-labs/rdflib-neo4j/blob/master/README.md#getting-started-without-n10s-if-you-cannot-install-n10s-for-example-in-auradb))
 
 Here are the steps you need to follow on your Neo4j database and on your python code:
 
@@ -107,7 +107,7 @@ Producing the following result (truncated):
     [...]
 ```
 
-## Getting Started without n10s (if you cannot install n10s. For example in [AuraDB](https://console.neo4j.io/))
+## Getting Started (when you cannot install n10s. For example in [AuraDB](https://console.neo4j.io/))
 
 **note:** [WIP Warning!] This is a (currently) limited option that only supports RDF import.
 
