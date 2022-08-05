@@ -107,7 +107,7 @@ Producing the following result (truncated):
     [...]
 ```
 
-## Getting Started without n10s (if you cannot install n10s. For example in [Aura](https://console.neo4j.io/))
+## Getting Started without n10s (if you cannot install n10s. For example in [AuraDB](https://console.neo4j.io/))
 
 **note:** [WIP Warning!] This is a (currently) limited option that only supports RDF import.
 
