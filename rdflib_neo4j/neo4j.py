@@ -27,7 +27,7 @@ class N10sNeo4jStore(Store):
 
     def open(self, config, create=False):
         self.driver = GraphDatabase.driver(config['uri'], auth=(config['auth']['user'], config['auth']['pwd']))
-        self.session = self.driver.session(database=config['database'], default_access_mode=WRITE_ACCESS)
+        self.session = self.driver.session(database=config.get('database','neo4j'), default_access_mode=WRITE_ACCESS)
         result = self.session.run("call n10s.graphconfig.show() yield param, value return count(*) as params")
         storeReady = next((True for x in result if x["params"] > 0), False)
         print('store ready:' + str(storeReady))

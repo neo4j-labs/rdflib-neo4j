@@ -28,7 +28,7 @@ class CypherNeo4jStore(Store):
 
     def open(self, config, create=False):
         self.driver = GraphDatabase.driver(config['uri'], auth=(config['auth']['user'], config['auth']['pwd']))
-        self.session = self.driver.session(database=config['database'], default_access_mode=WRITE_ACCESS)
+        self.session = self.driver.session(database=config.get('database','neo4j'), default_access_mode=WRITE_ACCESS)
         # tst connectivity to the backend
         result = self.session.run("return 1 as uno")
         storeReady = next((True for x in result if x["uno"] > 0), False)
@@ -52,19 +52,20 @@ class CypherNeo4jStore(Store):
         self.bufferActualSize += 1
 
         if isinstance(object, Literal):
-            # ignoring datatypes and lang tags for now
+            # 'special' datatypes are converted to strings and lang tags are lost (for now)
+            # also multivalued props are overwritten
             lang = object.language or None
             datatype = object.datatype or None
 
-            # if new predicate add new query
+            # if new predicate add new query (HERE, how to deal with multivalued props and )
             if (shorten(predicate) not in self.paramBuffer.keys()):
-                self.paramBuffer[shorten(predicate)] = [{"uri": subject, "val": object}]
+                self.paramBuffer[shorten(predicate)] = [{"uri": subject, "val": object.toPython()}]
                 self.queryBuffer[shorten(predicate)] = "unwind $params as pair " \
                                                        "merge (x:Resource {{ uri:pair.uri }}) " \
                                                        "set x.`{propname}` = pair.val".format(
                     propname=shorten(predicate))
             else:
-                self.paramBuffer[shorten(predicate)].append({"uri": subject, "val": object})
+                self.paramBuffer[shorten(predicate)].append({"uri": subject, "val": object.toPython()})
 
         elif (predicate == RDF.type):
             # add a prefix to indicate if the is used as a type
