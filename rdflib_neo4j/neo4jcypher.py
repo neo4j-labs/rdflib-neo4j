@@ -1,8 +1,9 @@
 from rdflib.store import Store
-from rdflib import Literal, RDF
+from rdflib import Literal, RDF, URIRef
 from neo4j import GraphDatabase
 from neo4j import WRITE_ACCESS
 import logging
+from decimal import Decimal
 
 __all__ = ["CypherNeo4jStore"]
 
@@ -55,11 +56,13 @@ class CypherNeo4jStore(Store):
             # 'special' datatypes are converted to strings and lang tags are lost (for now)
             # also multivalued props are overwritten
             lang = object.language or None
-            datatype = object.datatype or None
+
+            #python driver does not support decimal params
+            value = float(object.toPython()) if type(object.toPython()) == Decimal else object.toPython()
 
             # if new predicate add new query (HERE, how to deal with multivalued props and )
             if (shorten(predicate) not in self.paramBuffer.keys()):
-                self.paramBuffer[shorten(predicate)] = [{"uri": subject, "val": object.toPython()}]
+                self.paramBuffer[shorten(predicate)] = [{"uri": subject, "val": value }]
                 self.queryBuffer[shorten(predicate)] = "unwind $params as pair " \
                                                        "merge (x:Resource {{ uri:pair.uri }}) " \
                                                        "set x.`{propname}` = pair.val".format(
