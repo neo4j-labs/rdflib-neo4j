@@ -9,7 +9,7 @@ __all__ = ["CypherNeo4jStore"]
 
 class CypherNeo4jStore(Store):
 
-    context_aware = False
+    context_aware = True
     formula_aware = True
     transaction_aware = True
     graph_aware = True
@@ -29,23 +29,38 @@ class CypherNeo4jStore(Store):
 
     def open(self, config, create=False):
         self.driver = GraphDatabase.driver(config['uri'], auth=(config['auth']['user'], config['auth']['pwd']))
+
         self.session = self.driver.session(database=config.get('database','neo4j'), default_access_mode=WRITE_ACCESS)
-        # tst connectivity to the backend
-        result = self.session.run("return 1 as uno")
-        storeReady = next((True for x in result if x["uno"] > 0), False)
-        self.__open = True #storeReady
+
+        # test connectivity to backend and check that constraint on :Resource(uri) is present
+        constraint_check = """
+        show constraints yield * 
+        where type = "UNIQUENESS" 
+            and entityType = "NODE" 
+            and labelsOrTypes = ["Resource"] 
+            and properties = ["uri"] 
+        return count(*) = 1 as constraint_found
+        """
+        result = self.session.run(constraint_check)
+        constraint_found = next((True for x in result if x["constraint_found"]), False)
+        print("Uniqueness constraint on :Resource(uri) {yes_or_no}found. {suffix}"
+              .format(yes_or_no = "" if constraint_found else "not ",
+                      suffix = "" if constraint_found else "Run the following command on the Neo4j DB: "
+                            "CREATE CONSTRAINT n10s_unique_uri FOR (r:Resource) REQUIRE r.uri IS UNIQUE"))
+        self.__open = True
 
     def is_open(self):
         return self.__open
 
     def close(self, commit_pending_transaction=False):
+        self.session.close()
         self.driver.close()
         self.__open = False
 
     def destroy(self, configruation):
         print("destroying the store.")
 
-    def add(self, triple, context, quoted=False):
+    def add(self, triple, context=None, quoted=False):
         assert self.__open, "The Store must be open."
         assert context != self, "Can not add triple directly to store"
         (subject, predicate, object) = triple
@@ -60,37 +75,38 @@ class CypherNeo4jStore(Store):
             #python driver does not support decimal params
             value = float(object.toPython()) if type(object.toPython()) == Decimal else object.toPython()
 
-            # if new predicate add new query (HERE, how to deal with multivalued props and )
-            if (shorten(predicate) not in self.paramBuffer.keys()):
-                self.paramBuffer[shorten(predicate)] = [{"uri": subject, "val": value }]
-                self.queryBuffer[shorten(predicate)] = "unwind $params as pair " \
+            prop_key = "prop_" + shorten(predicate)
+            if (prop_key not in self.paramBuffer.keys()):
+                self.paramBuffer[prop_key] = [{"uri": subject, "val": value }]
+                self.queryBuffer[prop_key] = "unwind $params as pair " \
                                                        "merge (x:Resource {{ uri:pair.uri }}) " \
                                                        "set x.`{propname}` = pair.val".format(
                     propname=shorten(predicate))
             else:
-                self.paramBuffer[shorten(predicate)].append({"uri": subject, "val": object.toPython()})
+                self.paramBuffer[prop_key].append({"uri": subject, "val": value})
 
         elif (predicate == RDF.type):
-            # add a prefix to indicate if the is used as a type
-            if (shorten(object) not in self.paramBuffer.keys()):
-                self.paramBuffer[shorten(object)] = [subject]
-                self.queryBuffer[shorten(object)] = "unwind $params as uri " \
+
+            type_key = "type_" + shorten(object)
+            if (type_key not in self.paramBuffer.keys()):
+                self.paramBuffer[type_key] = [subject]
+                self.queryBuffer[type_key] = "unwind $params as uri " \
                                                        "merge (r:Resource {{ uri: uri }}) set r:`{type}`".format(
                     type=shorten(object))
             else:
-                self.paramBuffer[shorten(object)].append(subject)
+                self.paramBuffer[type_key].append(subject)
 
         else:
-            #add a prefix to indicate if the pred is being used as a prop or as a rel
-            if (shorten(predicate) not in self.paramBuffer.keys()):
-                self.paramBuffer[shorten(predicate)] = [{"uri": subject, "val": object}]
-                self.queryBuffer[shorten(predicate)] = "unwind $params as pair " \
+            rel_key = "rel_" + shorten(predicate)
+            if (rel_key not in self.paramBuffer.keys()):
+                self.paramBuffer[rel_key] = [{"uri": subject, "val": object}]
+                self.queryBuffer[rel_key] = "unwind $params as pair " \
                                                        "merge (from:Resource {{ uri:pair.uri }}) " \
                                                        "merge (to:Resource {{ uri:pair.val }}) " \
                                                        "merge (from)-[:`{propname}`]->(to) ".format(
                     propname=shorten(predicate))
             else:
-                self.paramBuffer[shorten(predicate)].append({"uri": subject, "val": object})
+                self.paramBuffer[rel_key].append({"uri": subject, "val": object})
 
         if self.inbatch:
             if self.bufferActualSize>= self.bufferMaxSize:
@@ -98,7 +114,7 @@ class CypherNeo4jStore(Store):
         else:
             self.__flushBuffer()
 
-    def remove(self, triple, context, txn=None):
+    def remove(self, triple, context=None, txn=None):
         return "this is a streamer no state, no triple removal"
 
 
@@ -110,7 +126,10 @@ class CypherNeo4jStore(Store):
         assert self.__open, "The Store must be open."
 
         for key in self.queryBuffer.keys():
-            self.session.run(self.queryBuffer[key], params = self.paramBuffer[key])
+            try:
+                self.session.run(self.queryBuffer[key], params = self.paramBuffer[key])
+            except TypeError:
+                print("query:",self.queryBuffer[key],"params:",self.paramBuffer[key])
 
         self.bufferActualSize = 0
 
