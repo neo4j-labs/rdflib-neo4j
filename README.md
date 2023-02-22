@@ -60,17 +60,17 @@ import rdflib
 # create a neo4j backed Graph
 g = rdflib.Graph(store='neo4j-n10s')
 
-# set the configuration to connect to your Neo4j DB 
+# set the configuration to connect to your Neo4j DB
 theconfig = {'uri': "neo4j://localhost:7687", 'database': '<your_db_name>', 'auth': {'user': "neo4j", 'pwd': "<your_pwd>"}}
 
 g.open(theconfig, create = False)
 
-g.load("https://raw.githubusercontent.com/jbarrasa/datasets/master/rdf/music.nt", format="nt")
+g.parse("https://raw.githubusercontent.com/jbarrasa/datasets/master/rdf/music.nt", format="nt")
 
 # For each foaf:Person in the store, print out their mbox property's value.
 print("--- printing band's names ---")
-for band in g.subjects(rdflib.RDF.type, rdflib.URIRef("http://neo4j.com/voc/music#Band")):
-    for bandName in g.objects(band, rdflib.URIRef("http://neo4j.com/voc/music#name")):
+for band in g.subjects(rdflib.RDF.type, rdflib.URIRef("neo4j://graph.schema#Band")):
+    for bandName in g.objects(band, rdflib.URIRef("neo4j://graph.schema#name")):
         print(bandName)
 ```
 This fragment retunrs a listing with the names of the bands in the dataset and at the same time, has populated your Neo4j DB with a graph like this one:
