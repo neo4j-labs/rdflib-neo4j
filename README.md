@@ -80,7 +80,7 @@ This fragment retunrs a listing with the names of the bands in the dataset and a
 You can also write to the graph triple by triple like this:
 
 ```python
-MUSIC = rdflib.Namespace("http://neo4j.com/voc/music#")
+MUSIC = rdflib.Namespace("neo4j://graph.schema#")
 fm = rdflib.URIRef("http://neo4j.com/indiv#Fleetwood_Mac")
 
 g.add((fm, rdflib.RDF.type, MUSIC.Band))
@@ -92,7 +92,7 @@ The previous fragment would add another node to the graph representing the band 
 
 It is also possible to serialise your graph like this:
  ```python
-print(g.serialize(format="turtle").decode("utf-8"))
+print(g.serialize())
 ```
 
 Producing the following result (truncated):
