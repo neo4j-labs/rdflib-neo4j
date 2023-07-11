@@ -27,26 +27,39 @@ class CypherNeo4jStore(Store):
         self.__open = False
 
 
+
     def open(self, config, create=False):
         self.driver = GraphDatabase.driver(config['uri'], auth=(config['auth']['user'], config['auth']['pwd']))
-
-        self.session = self.driver.session(database=config.get('database','neo4j'), default_access_mode=WRITE_ACCESS)
+        self.session = self.driver.session(database=config.get('database', 'neo4j'), default_access_mode=WRITE_ACCESS)
 
         # test connectivity to backend and check that constraint on :Resource(uri) is present
         constraint_check = """
-        show constraints yield * 
-        where type = "UNIQUENESS" 
-            and entityType = "NODE" 
-            and labelsOrTypes = ["Resource"] 
-            and properties = ["uri"] 
-        return count(*) = 1 as constraint_found
+        SHOW CONSTRAINTS YIELD * 
+        WHERE type = "UNIQUENESS" 
+            AND entityType = "NODE" 
+            AND labelsOrTypes = ["Resource"] 
+            AND properties = ["uri"] 
+        RETURN COUNT(*) = 1 AS constraint_found
         """
         result = self.session.run(constraint_check)
         constraint_found = next((True for x in result if x["constraint_found"]), False)
-        print("Uniqueness constraint on :Resource(uri) {yes_or_no}found. {suffix}"
-              .format(yes_or_no = "" if constraint_found else "not ",
-                      suffix = "" if constraint_found else "Run the following command on the Neo4j DB: "
-                            "CREATE CONSTRAINT n10s_unique_uri FOR (r:Resource) REQUIRE r.uri IS UNIQUE"))
+
+        if not constraint_found and create:
+            try:
+                # Create the uniqueness constraint
+                create_constraint = """
+                CREATE CONSTRAINT n10s_unique_uri FOR (r:Resource) REQUIRE r.uri IS UNIQUE
+                """
+                self.session.run(create_constraint)
+                print("Uniqueness constraint on :Resource(uri) is created.")
+            except Exception as e:
+                print("Error: Unable to create the uniqueness constraint. Make sure you have the necessary privileges.")
+                print("Exception: ", e)
+        else:
+            print("Uniqueness constraint on :Resource(uri) {yes_or_no}found. {suffix}"
+                .format(yes_or_no="" if constraint_found else "not ",
+                        suffix="" if constraint_found else "Run the following command on the Neo4j DB to create the constraint: "
+                                                        "CREATE CONSTRAINT n10s_unique_uri FOR (r:Resource) REQUIRE r.uri IS UNIQUE. Or provide create=True to create it."))
         self.__open = True
 
     def is_open(self):
