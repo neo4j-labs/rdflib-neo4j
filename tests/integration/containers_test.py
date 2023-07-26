@@ -300,3 +300,4 @@ def test_read_file_multival_with_no_strategy_and_predicates(neo4j_driver, graph_
         assert records_equal(records[i], records_from_rdf_lib[i])
 
 def another_test(neo4j_driver, graph_store):
+    assert False
