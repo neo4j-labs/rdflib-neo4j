@@ -299,5 +299,30 @@ def test_read_file_multival_with_no_strategy_and_predicates(neo4j_driver, graph_
     for i in range(len(records)):
         assert records_equal(records[i], records_from_rdf_lib[i])
 
+
 def another_test(neo4j_driver, graph_store):
+    assert False
+
+
+def test_custom_mapping_match():
+    """
+    If we define a custom mapping and the strategy is HANDLE_VOCAB_URI_STRATEGY.MAP, it should match it and use the mapping
+    if the predicate satisfies the mapping.
+    """
+    assert False
+
+
+def test_custom_mapping_no_match():
+    """
+    If we define a custom mapping and the strategy is HANDLE_VOCAB_URI_STRATEGY.MAP, it shouldn't apply the mapping if the
+    predicate doesn't satisfy the mapping and use IGNORE as a strategy.
+    """
+    assert False
+
+
+def test_custom_mapping_map_strategy_zero_custom_mappings():
+    """
+    If we don't define custom mapping and the strategy is HANDLE_VOCAB_URI_STRATEGY.MAP, it shouldn't apply the mapping on anything and
+    just use IGNORE mode.
+    """
     assert False

@@ -173,7 +173,6 @@ def handle_vocab_uri(mappings: Dict[str, str],
     raise Exception(f"Strategy {strategy} not defined.")
 
 
-
 class HANDLE_MULTIVAL_STRATEGY(Enum):
     """
     Enum class defining different strategies for handling multiple values.

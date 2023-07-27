@@ -1,10 +1,10 @@
 from collections import defaultdict
 from decimal import Decimal
 from typing import Dict, Set, List
-from rdflib import Literal, URIRef, RDF
+from rdflib import Literal, URIRef, RDF, Namespace
 from rdflib.term import Node
 
-from rdflib_neo4j.utils import handle_vocab_uri, HANDLE_MULTIVAL_STRATEGY
+from rdflib_neo4j.utils import handle_vocab_uri, HANDLE_MULTIVAL_STRATEGY, HANDLE_VOCAB_URI_STRATEGY
 
 
 class Neo4jTriple:
@@ -14,7 +14,25 @@ class Neo4jTriple:
     multi_props: Dict[str, List[Literal]]
     relationships: Dict[str, Set[URIRef]]
 
-    def __init__(self, uri: Node, handle_vocab_uri_strategy, handle_multival_strategy, multival_props_names, prefixes):
+    """
+        Represents a triple extracted from RDF data for use in a Neo4j database.
+        """
+
+    def __init__(self, uri: Node,
+                 handle_vocab_uri_strategy: HANDLE_VOCAB_URI_STRATEGY,
+                 handle_multival_strategy: HANDLE_MULTIVAL_STRATEGY,
+                 multival_props_names: List[str],
+                 prefixes: Dict[str, str]):
+        """
+        Constructor for Neo4jTriple.
+
+        Args:
+            uri (Node): The subject URI of the triple.
+            handle_vocab_uri_strategy: The strategy to handle vocabulary URIs.
+            handle_multival_strategy: The strategy to handle multiple values.
+            multival_props_names: A list containing URIs to be treated as multivalued.
+            prefixes: A dictionary of namespace prefixes used for vocabulary URI handling.
+        """
         self.uri = uri
         self.labels = set()
         self.props = {}
@@ -89,6 +107,15 @@ class Neo4jTriple:
         return res
 
     def extract_props_names(self, multi=False):
+        """
+        Extracts property names from the Neo4jTriple object.
+
+        Args:
+            multi (bool): If True, extract property names from multi_props, otherwise from props.
+
+        Returns:
+            set: A set containing the extracted property names.
+        """
         if not multi:
             return set(key for key in self.props)
         return set(key for key in self.multi_props)
@@ -103,7 +130,17 @@ class Neo4jTriple:
         return {key: list(value) for key, value in self.relationships.items()}
 
     def handle_vocab_uri(self, mappings, predicate):
-        return handle_vocab_uri(mappings, predicate,self.prefixes, self.handle_vocab_uri_strategy)
+        """
+        Handles a vocabulary URI according to the specified strategy, defined using the HANDLE_VOCAB_URI_STRATEGY Enum.
+
+        Args:
+            mappings (Dict[str, str]): A dictionary mapping URIs to their mapped values.
+            predicate (URIRef): The predicate URI to be handled.
+
+        Returns:
+            str: The handled predicate URI based on the specified strategy.
+        """
+        return handle_vocab_uri(mappings, predicate, self.prefixes, self.handle_vocab_uri_strategy)
 
     def parse_triple(self, triple, mappings):
         """
@@ -115,22 +152,27 @@ class Neo4jTriple:
         """
         (subject, predicate, object) = triple
 
+        # Getting a property
         if isinstance(object, Literal):
             # python driver does not support decimal params
             value = float(object.toPython()) if type(object.toPython()) == Decimal else object.toPython()
             prop_name = self.handle_vocab_uri(mappings, predicate)
 
+            # If at least a name is defined and the predicate is one of the properties defined by the user
             if self.handle_multival_strategy == HANDLE_MULTIVAL_STRATEGY.ARRAY and \
                     str(predicate) in self.multival_props_names:
                 self.add_prop(prop_name, value, True)
+            # If the user doesn't define any predicate to manage as an array, then everything is an array
             elif self.handle_multival_strategy == HANDLE_MULTIVAL_STRATEGY.ARRAY and not self.multival_props_names:
                 self.add_prop(prop_name, value, True)
             else:
                 self.add_prop(prop_name, value)
 
+        # Getting a label
         elif predicate == RDF.type:
             self.add_label(self.handle_vocab_uri(mappings, object))
 
+        # Getting its relationships
         else:
             rel_type = self.handle_vocab_uri(mappings, predicate)
             self.add_rel(rel_type, object)

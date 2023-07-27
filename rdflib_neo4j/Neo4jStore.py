@@ -191,7 +191,7 @@ class Neo4jStore(Store):
 
     def create_current_subject(self, subject):
         return Neo4jTriple(uri=subject,
-                           prefixes={value: key for key, value in self.config.get_prefixes().items()},
+                           prefixes={value: key for key, value in self.config.get_prefixes().items()}, # Reversing the Prefix dictionary
                            handle_vocab_uri_strategy=self.handle_vocab_uri_strategy,
                            handle_multival_strategy=self.handle_multival_strategy,
                            multival_props_names=self.multival_props_predicates)

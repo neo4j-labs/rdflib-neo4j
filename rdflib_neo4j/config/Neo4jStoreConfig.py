@@ -8,6 +8,7 @@ from rdflib_neo4j.config.const import (
 )
 from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
 
+
 def check_auth_data(auth):
     """
     Checks if the required authentication fields are present.
@@ -25,18 +26,27 @@ def check_auth_data(auth):
         if param_name not in auth:
             raise WrongAuthenticationException(param_name=param_name)
 
+
 class Neo4jStoreConfig:
     """
     Configuration class for Neo4j RDF store.
 
     Parameters:
+
     - auth_data: A dictionary containing authentication data (default: None).
+
     - custom_mappings: A list of tuples containing custom mappings for prefixes (default: empty list).
+
     - custom_prefixes: A dictionary containing custom prefixes (default: empty dictionary).
+
     - batching: A boolean indicating whether batching is enabled (default: True).
+
     - batch_size: An integer representing the batch size (default: 5000).
+
     - handle_vocab_uri_strategy: The strategy to handle vocabulary URIs (default: HANDLE_VOCAB_URI_STRATEGY.SHORTEN).
+
     - handle_multival_strategy: The strategy to handle multiple values (default: HANDLE_MULTIVAL_STRATEGY.OVERWRITE).
+
     - multival_props_names: A list of tuples containing the prefix and property names to be treated as multivalued.
     """
 
