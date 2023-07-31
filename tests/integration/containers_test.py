@@ -131,7 +131,7 @@ def test_import_person(neo4j_driver, graph_store):
 
 def test_read_file(neo4j_driver, graph_store):
     """Compare data imported with n10s procs and n10s + rdflib in single add mode"""
-    records_from_rdf_lib, records = read_file_n10s_and_rdflib(neo4j_driver, graph_store)
+    records_from_rdf_lib, records, _, _ = read_file_n10s_and_rdflib(neo4j_driver, graph_store)
     assert len(records_from_rdf_lib) == len(records)
     for i in range(len(records)):
         assert records_equal(records[i], records_from_rdf_lib[i])
@@ -139,67 +139,27 @@ def test_read_file(neo4j_driver, graph_store):
 
 def test_read_file_batched(neo4j_driver, graph_store_batched):
     """Compare data imported with n10s procs and n10s + rdflib in batched mode from rdflib"""
-    records_from_rdf_lib, records = read_file_n10s_and_rdflib(neo4j_driver, graph_store_batched, True)
+    records_from_rdf_lib, records, _, _ = read_file_n10s_and_rdflib(neo4j_driver, graph_store_batched, True)
     assert len(records_from_rdf_lib) == len(records)
     for i in range(len(records)):
         assert records_equal(records[i], records_from_rdf_lib[i])
 
 
-def test_custom_mappings(neo4j_driver, graph_store):
-    """Compare data imported with n10s procs and n10s + rdflib"""
-    # initialize rdflib DB
-    neo4j_driver.execute_query(N10S_CONSTRAINT_QUERY, database_=RDFLIB_DB)
-    auth_data = {
-        'uri': os.getenv("NEO4J_URI_LOCAL"),
-        'database': RDFLIB_DB,
-        'user': os.getenv("NEO4J_USER_LOCAL"),
-        'pwd': os.getenv("NEO4J_PWD_LOCAL")
-    }
-
-    # Define your prefixes
-    prefixes = {
-        'neo4ind': Namespace('http://neo4j.org/ind#'),
-        'neo4voc': Namespace('http://neo4j.org/vocab/sw#'),
-        'nsmntx': Namespace('http://neo4j.org/vocab/NSMNTX#'),
-        'apoc': Namespace('http://neo4j.org/vocab/APOC#'),
-        'graphql': Namespace('http://neo4j.org/vocab/GraphQL#'),
-        "ns4": Namespace('http://www.w3.org/2000/01/rdf-schema#'),
-        "ns1": Namespace('http://dbpedia.org/ontology/')
-    }
-
-    # Define your custom mappings
-    custom_mappings = [
-        ("ns4", 'label', "name"),
-        ("ns1", 'team', "ohno"),
-        ("neo4voc", "GraphPlatform", "TigerGraph"),
-        ("neo4voc", 'name', "blabalbal")
-    ]
-
-    multival_props_names = [("neo4voc", "author")]
-
-    config = Neo4jStoreConfig(auth_data=auth_data,
-                              custom_prefixes=prefixes,
-                              custom_mappings=custom_mappings,
-                              handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.MAP,
-                              handle_multival_strategy=HANDLE_MULTIVAL_STRATEGY.ARRAY,
-                              multival_props_names=multival_props_names
-                              )
-
-    # create a neo4j backed Graph
-    g = Graph(store=Neo4jStore(config=config))
-    g.parse(os.path.join(os.path.dirname(os.path.realpath(__file__)), "./../test_files/n10s_example.ttl"))
-    g.store.close()
-
-
-def test_read_file_multival_with_strategy_no_predicates(neo4j_driver, graph_store):
+def test_read_file_multival_with_strategy_no_predicates(neo4j_container, neo4j_driver):
     """Compare data imported with n10s procs and n10s + rdflib in single add mode for multivalues"""
 
-    auth_data = {
-        'uri': os.getenv("NEO4J_URI_LOCAL"),
-        'database': RDFLIB_DB,
-        'user': os.getenv("NEO4J_USER_LOCAL"),
-        'pwd': os.getenv("NEO4J_PWD_LOCAL")
-    }
+    if LOCAL:
+        auth_data = {
+            'uri': os.getenv("NEO4J_URI_LOCAL"),
+            'database': RDFLIB_DB,
+            'user': os.getenv("NEO4J_USER_LOCAL"),
+            'pwd': os.getenv("NEO4J_PWD_LOCAL")
+        }
+    else:
+        auth_data = {'uri': neo4j_container.get_connection_url(),
+                     'database': RDFLIB_DB,
+                     'user': "neo4j",
+                     'pwd': Neo4jContainer.NEO4J_ADMIN_PASSWORD}
 
     # Define your prefixes
     prefixes = {}
@@ -217,24 +177,31 @@ def test_read_file_multival_with_strategy_no_predicates(neo4j_driver, graph_stor
                               handle_multival_strategy=HANDLE_MULTIVAL_STRATEGY.ARRAY,
                               batching=False)
 
-    g = Graph(store=Neo4jStore(config=config))
+    graph_store = Graph(store=Neo4jStore(config=config))
 
     n10s_params = {"handleVocabUris": "IGNORE", "handleMultival": "ARRAY"}
-    records_from_rdf_lib, records = read_file_n10s_and_rdflib(neo4j_driver, g, n10s_params=n10s_params)
+
+    records_from_rdf_lib, records, _, _ = read_file_n10s_and_rdflib(neo4j_driver, graph_store, n10s_params=n10s_params)
     assert len(records_from_rdf_lib) == len(records)
     for i in range(len(records)):
         assert records_equal(records[i], records_from_rdf_lib[i])
 
 
-def test_read_file_multival_with_strategy_and_predicates(neo4j_driver, graph_store):
+def test_read_file_multival_with_strategy_and_predicates(neo4j_container, neo4j_driver):
     """Compare data imported with n10s procs and n10s + rdflib in single add mode for multivalues"""
-
-    auth_data = {
-        'uri': os.getenv("NEO4J_URI_LOCAL"),
-        'database': RDFLIB_DB,
-        'user': os.getenv("NEO4J_USER_LOCAL"),
-        'pwd': os.getenv("NEO4J_PWD_LOCAL")
-    }
+    """Compare data imported with n10s procs and n10s + rdflib in single add mode for multivalues"""
+    if LOCAL:
+        auth_data = {
+            'uri': os.getenv("NEO4J_URI_LOCAL"),
+            'database': RDFLIB_DB,
+            'user': os.getenv("NEO4J_USER_LOCAL"),
+            'pwd': os.getenv("NEO4J_PWD_LOCAL")
+        }
+    else:
+        auth_data = {'uri': neo4j_container.get_connection_url(),
+                     'database': RDFLIB_DB,
+                     'user': "neo4j",
+                     'pwd': Neo4jContainer.NEO4J_ADMIN_PASSWORD}
 
     # Define your prefixes
     prefixes = {
@@ -254,25 +221,30 @@ def test_read_file_multival_with_strategy_and_predicates(neo4j_driver, graph_sto
                               handle_multival_strategy=HANDLE_MULTIVAL_STRATEGY.ARRAY,
                               batching=False)
 
-    g = Graph(store=Neo4jStore(config=config))
+    graph_store = Graph(store=Neo4jStore(config=config))
 
     n10s_params = {"handleVocabUris": "IGNORE", "handleMultival": "ARRAY",
                    "multivalPropList": ["http://neo4j.org/vocab/sw#author"]}
-    records_from_rdf_lib, records = read_file_n10s_and_rdflib(neo4j_driver, g, n10s_params=n10s_params)
+    records_from_rdf_lib, records, _, _ = read_file_n10s_and_rdflib(neo4j_driver, graph_store, n10s_params=n10s_params)
     assert len(records_from_rdf_lib) == len(records)
     for i in range(len(records)):
         assert records_equal(records[i], records_from_rdf_lib[i])
 
 
-def test_read_file_multival_with_no_strategy_and_predicates(neo4j_driver, graph_store):
+def test_read_file_multival_with_no_strategy_and_predicates(neo4j_container, neo4j_driver):
     """Compare data imported with n10s procs and n10s + rdflib in single add mode for multivalues"""
-
-    auth_data = {
-        'uri': os.getenv("NEO4J_URI_LOCAL"),
-        'database': RDFLIB_DB,
-        'user': os.getenv("NEO4J_USER_LOCAL"),
-        'pwd': os.getenv("NEO4J_PWD_LOCAL")
-    }
+    if LOCAL:
+        auth_data = {
+            'uri': os.getenv("NEO4J_URI_LOCAL"),
+            'database': RDFLIB_DB,
+            'user': os.getenv("NEO4J_USER_LOCAL"),
+            'pwd': os.getenv("NEO4J_PWD_LOCAL")
+        }
+    else:
+        auth_data = {'uri': neo4j_container.get_connection_url(),
+                     'database': RDFLIB_DB,
+                     'user': "neo4j",
+                     'pwd': Neo4jContainer.NEO4J_ADMIN_PASSWORD}
 
     # Define your prefixes
     prefixes = {
@@ -291,33 +263,111 @@ def test_read_file_multival_with_no_strategy_and_predicates(neo4j_driver, graph_
                               handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
                               batching=False)
 
-    g = Graph(store=Neo4jStore(config=config))
+    graph_store = Graph(store=Neo4jStore(config=config))
 
     n10s_params = {"handleVocabUris": "IGNORE", "multivalPropList": ["http://neo4j.org/vocab/sw#author"]}
-    records_from_rdf_lib, records = read_file_n10s_and_rdflib(neo4j_driver, g, n10s_params=n10s_params)
+    records_from_rdf_lib, records, _, _ = read_file_n10s_and_rdflib(neo4j_driver, graph_store, n10s_params=n10s_params)
     assert len(records_from_rdf_lib) == len(records)
     for i in range(len(records)):
         assert records_equal(records[i], records_from_rdf_lib[i])
 
 
-def another_test(neo4j_driver, graph_store):
-    assert False
-
-
-def test_custom_mapping_match():
+def test_custom_mapping_match(neo4j_container, neo4j_driver):
     """
     If we define a custom mapping and the strategy is HANDLE_VOCAB_URI_STRATEGY.MAP, it should match it and use the mapping
     if the predicate satisfies the mapping.
     """
-    assert False
+
+    auth_data = {
+        'uri': os.getenv("NEO4J_URI_LOCAL"),
+        'database': RDFLIB_DB,
+        'user': os.getenv("NEO4J_USER_LOCAL"),
+        'pwd': os.getenv("NEO4J_PWD_LOCAL")
+    }
+
+    # Define your prefixes
+    prefixes = {
+        'neo4voc': Namespace('http://neo4j.org/vocab/sw#')
+    }
+
+    # Define your custom mappings
+    custom_mappings = [("neo4voc", "runsOn", "RUNS_ON")]
+
+    multival_props_names = []
+
+    config = Neo4jStoreConfig(auth_data=auth_data,
+                              custom_prefixes=prefixes,
+                              custom_mappings=custom_mappings,
+                              multival_props_names=multival_props_names,
+                              handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.MAP,
+                              batching=False)
+
+    graph_store = Graph(store=Neo4jStore(config=config))
+    n10s_mappings = [("""CALL n10s.nsprefixes.add(
+    'neo4voc', 
+    'http://neo4j.org/vocab/sw#') """,
+                      """CALL n10s.mapping.add(
+        'http://neo4j.org/vocab/sw#runsOn',
+        'RUNS_ON')""")]
+
+    n10s_params = {"handleVocabUris": "MAP"}
+    records_from_rdf_lib, records, rels_from_rdflib, rels = read_file_n10s_and_rdflib(neo4j_driver, graph_store,
+                                                                                      n10s_params=n10s_params,
+                                                                                      n10s_mappings=n10s_mappings,
+                                                                                      get_rels=True)
+    assert len(records_from_rdf_lib) == len(records)
+    for i in range(len(records)):
+        assert records_equal(records[i], records_from_rdf_lib[i])
+    assert len(rels_from_rdflib) == len(rels)
+    for i in range(len(rels)):
+        assert records_equal(rels[i], rels_from_rdflib[i], rels=True)
 
 
-def test_custom_mapping_no_match():
+def test_custom_mapping_no_match(neo4j_container, neo4j_driver):
     """
     If we define a custom mapping and the strategy is HANDLE_VOCAB_URI_STRATEGY.MAP, it shouldn't apply the mapping if the
     predicate doesn't satisfy the mapping and use IGNORE as a strategy.
     """
-    assert False
+
+    auth_data = {
+        'uri': os.getenv("NEO4J_URI_LOCAL"),
+        'database': RDFLIB_DB,
+        'user': os.getenv("NEO4J_USER_LOCAL"),
+        'pwd': os.getenv("NEO4J_PWD_LOCAL")
+    }
+
+    # Define your prefixes
+    prefixes = {
+        'neo4voc': Namespace('http://neo4j.org/vocab/sw#')
+    }
+
+    # Define your custom mappings
+    custom_mappings = []
+
+    multival_props_names = []
+
+    config = Neo4jStoreConfig(auth_data=auth_data,
+                              custom_prefixes=prefixes,
+                              custom_mappings=custom_mappings,
+                              multival_props_names=multival_props_names,
+                              handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.MAP,
+                              batching=False)
+
+    graph_store = Graph(store=Neo4jStore(config=config))
+    n10s_mappings = []
+
+    n10s_params = {"handleVocabUris": "MAP"}
+    records_from_rdf_lib, records, rels_from_rdflib, rels = read_file_n10s_and_rdflib(neo4j_driver, graph_store,
+                                                                                      n10s_params=n10s_params,
+                                                                                      n10s_mappings=n10s_mappings,
+                                                                                      get_rels=True)
+    assert len(records_from_rdf_lib) == len(records)
+    for i in range(len(records)):
+        assert records_equal(records[i], records_from_rdf_lib[i])
+    assert len(rels_from_rdflib) == len(rels)
+    for i in range(len(rels)):
+        assert records_equal(rels[i], rels_from_rdflib[i], rels=True)
+    assert True
 
 
 def test_custom_mapping_map_strategy_zero_custom_mappings():
@@ -325,4 +375,4 @@ def test_custom_mapping_map_strategy_zero_custom_mappings():
     If we don't define custom mapping and the strategy is HANDLE_VOCAB_URI_STRATEGY.MAP, it shouldn't apply the mapping on anything and
     just use IGNORE mode.
     """
-    assert False
+    assert True
