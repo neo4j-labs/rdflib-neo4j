@@ -113,3 +113,18 @@ def config_graph_store(auth_data, batching=False):
 
     g = Graph(store=Neo4jStore(config=config))
     return g
+
+def get_credentials(local, neo4j_container):
+    if local:
+        auth_data = {
+            'uri': os.getenv("NEO4J_URI_LOCAL"),
+            'database': RDFLIB_DB,
+            'user': os.getenv("NEO4J_USER_LOCAL"),
+            'pwd': os.getenv("NEO4J_PWD_LOCAL")
+        }
+    else:
+        auth_data = {'uri': neo4j_container.get_connection_url(),
+                     'database': RDFLIB_DB,
+                     'user': "neo4j",
+                     'pwd': Neo4jContainer.NEO4J_ADMIN_PASSWORD}
+    return auth_data
