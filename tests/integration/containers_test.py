@@ -1,12 +1,7 @@
 import pytest
-from rdflib import Graph, Literal, RDF, URIRef, Namespace
+from rdflib import Graph, Literal, RDF, URIRef
 from rdflib.namespace import FOAF
-
-from rdflib_neo4j.Neo4jStore import Neo4jStore
-from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
-from rdflib_neo4j.config.const import ShortenStrictException
-from tests.integration.utils import records_equal, read_file_n10s_and_rdflib, create_graph_store, get_credentials
-from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY
+from tests.integration.utils import records_equal, read_file_n10s_and_rdflib
 import os
 from dotenv import load_dotenv
 

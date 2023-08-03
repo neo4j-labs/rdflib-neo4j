@@ -97,3 +97,6 @@ def test_shorten_missing_prefix(neo4j_container, neo4j_driver):
     except Exception as e:
         assert isinstance(e, ShortenStrictException)
     assert True
+
+
+# TODO: add test for each strategy in HANDLE_VOCAB_URI_STRATEGY
