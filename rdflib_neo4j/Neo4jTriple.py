@@ -1,7 +1,7 @@
 from collections import defaultdict
 from decimal import Decimal
 from typing import Dict, Set, List
-from rdflib import Literal, URIRef, RDF, Namespace
+from rdflib import Literal, URIRef, RDF
 from rdflib.term import Node
 
 from rdflib_neo4j.utils import handle_vocab_uri, HANDLE_MULTIVAL_STRATEGY, HANDLE_VOCAB_URI_STRATEGY

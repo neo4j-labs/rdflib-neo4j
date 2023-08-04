@@ -1,4 +1,3 @@
-import time
 from abc import ABC
 from typing import Dict
 
@@ -15,7 +14,7 @@ from rdflib_neo4j.query_composers.RelationshipQueryComposer import RelationshipQ
 __all__ = ["Neo4jStore"]
 
 
-class Neo4jStore(Store, ABC):
+class Neo4jStore(Store):
 
     def __init__(self, config: Neo4jStoreConfig, identifier=None):
         self.__open = False
