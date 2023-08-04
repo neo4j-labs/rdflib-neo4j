@@ -35,7 +35,7 @@ class Neo4jStoreConfig:
 
     - auth_data: A dictionary containing authentication data (default: None).
 
-    - custom_mappings: A list of tuples containing custom mappings for prefixes (default: empty list).
+    - custom_mappings: A list of tuples containing custom mappings for prefixes in the form (prefix, objectToReplace, newObject) (default: empty list).
 
     - custom_prefixes: A dictionary containing custom prefixes (default: empty dictionary).
 

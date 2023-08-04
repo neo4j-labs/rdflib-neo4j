@@ -15,8 +15,8 @@ class Neo4jTriple:
     relationships: Dict[str, Set[URIRef]]
 
     """
-        Represents a triple extracted from RDF data for use in a Neo4j database.
-        """
+    Represents a triple extracted from RDF data for use in a Neo4j database.
+    """
 
     def __init__(self, uri: Node,
                  handle_vocab_uri_strategy: HANDLE_VOCAB_URI_STRATEGY,
@@ -154,7 +154,7 @@ class Neo4jTriple:
 
         # Getting a property
         if isinstance(object, Literal):
-            # python driver does not support decimal params
+            # Neo4j Python driver does not support decimal params
             value = float(object.toPython()) if type(object.toPython()) == Decimal else object.toPython()
             prop_name = self.handle_vocab_uri(mappings, predicate)
 

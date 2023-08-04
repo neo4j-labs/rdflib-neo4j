@@ -9,11 +9,11 @@ DEFAULT_PREFIXES = {
     "owl": "http://www.w3.org/2002/07/owl#",
     "xsd": "http://www.w3.org/2001/XMLSchema#",
     "exterms": "http://www.example.org/terms/",
-    "ex" : "http://www.example.org/indiv/"
+    "ex": "http://www.example.org/indiv/"
 }
 
-
 NEO4J_AUTH_REQUIRED_FIELDS = ["uri", "database", "user", "pwd"]
+
 
 class PrefixNotFoundException(Exception):
 
@@ -24,6 +24,7 @@ class PrefixNotFoundException(Exception):
     # __str__ is to print() the value
     def __str__(self):
         return f"Prefix {(repr(self.value))} not found inside the configuration. Please add it before adding any related custom mapping."
+
 
 class ShortenStrictException(Exception):
 

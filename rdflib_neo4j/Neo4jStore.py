@@ -1,4 +1,5 @@
 import time
+from abc import ABC
 from typing import Dict
 
 from rdflib.store import Store
@@ -13,14 +14,8 @@ from rdflib_neo4j.query_composers.RelationshipQueryComposer import RelationshipQ
 
 __all__ = ["Neo4jStore"]
 
-from rdflib_neo4j.utils import timing
 
-
-class Neo4jStore(Store):
-    context_aware = True
-    formula_aware = True
-    transaction_aware = True
-    graph_aware = True
+class Neo4jStore(Store, ABC):
 
     def __init__(self, config: Neo4jStoreConfig, identifier=None):
         self.__open = False
@@ -44,9 +39,9 @@ class Neo4jStore(Store):
         self.handle_multival_strategy = config.handle_multival_strategy
         self.multival_props_predicates = config.multival_props_names
 
-    def set_session(self):
+    def create_session(self):
         """
-        Sets up the Neo4j session and driver.
+        Creates the Neo4j session and driver.
 
         This function initializes the driver and session based on the provided configuration.
 
@@ -107,10 +102,8 @@ class Neo4jStore(Store):
             create (bool): Flag indicating whether to create the uniqueness constraint if not found.
 
         """
-        self.set_session()
-
+        self.create_session()
         self.constraint_check(create)
-
         self.set_open(True)
 
     def set_open(self, val: bool):
@@ -146,6 +139,9 @@ class Neo4jStore(Store):
         self.session.close()
         self.driver.close()
         self.set_open(False)
+        print(f"IMPORTED {self.total_triples} TRIPLES")
+        print(f"TOTAL FLUSHED: NODES: {self.statistics['node_count']} RELATIONSHIPS: {self.statistics['rel_count']}")
+
 
     def store_current_subject_props(self):
         """
@@ -225,7 +221,9 @@ class Neo4jStore(Store):
         assert self.is_open(), "The Store must be open."
         assert context != self, "Can not add triple directly to store"
 
+        # Unpacking the triple
         (subject, predicate, object) = triple
+
         self.check_current_subject(subject=subject)
         self.current_subject.parse_triple(triple=triple, mappings=self.mappings)
         self.total_triples += 1
@@ -284,7 +282,6 @@ class Neo4jStore(Store):
                 query = cur.write_query()
                 params = cur.query_params
                 self.query_database(query=query, params=params)
-                print(f"For label: {key} FLUSHED NODES:{len(cur.query_params)}")
                 self.statistics["node_count"] += len(cur.query_params)
                 cur.empty_query_params()
         self.node_buffer_size = 0
@@ -297,7 +294,6 @@ class Neo4jStore(Store):
             cur = self.rel_buffer[key]
             if not cur.is_redundant():
                 self.query_database(cur.write_query(), cur.query_params)
-                print(f"For type: {key} FLUSHED RELS:{len(cur.query_params)}")
                 self.statistics["rel_count"] += len(cur.query_params)
                 cur.empty_query_params()
         self.rel_buffer_size = 0
@@ -317,20 +313,3 @@ class Neo4jStore(Store):
             logging.error(e)
             raise e
 
-    def endBatchedWrite(self):
-        """
-        Ends batched write mode for the Neo4j store.
-        """
-        if self.batching:
-            assert self.is_open(), "The Store must be open."
-            if self.total_triples > 0:
-                self.commit()
-            self.batching = False
-            logging.info("batch import done")
-
-        for cur in self.node_buffer.values():
-            print(cur.write_query())
-        for cur in self.rel_buffer.values():
-            print(cur.write_query())
-        print(f"IMPORTED {self.total_triples} TRIPLES")
-        print(f"TOTAL FLUSHED: NODES: {self.statistics['node_count']} RELATIONSHIPS: {self.statistics['rel_count']}")

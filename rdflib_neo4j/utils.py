@@ -75,11 +75,30 @@ def getNamespacePart(uri):
 class HANDLE_VOCAB_URI_STRATEGY(Enum):
     """
     Enum class defining different strategies for handling vocabulary URIs.
+
+    - SHORTEN : Strategy to shorten the URIs (Every prefix that you will use must be defined in the config, otherwise Neo4jStore will throw a ShortenStrictException)
+    - MAP : Strategy to map the URIs using provided mappings
+    - KEEP : Strategy to keep the URIs
+    - IGNORE : Strategy to ignore the Namespace and get only the local part
+
     """
     SHORTEN = "SHORTEN"  # Strategy to shorten the URIs
     MAP = "MAP"  # Strategy to map the URIs using provided mappings
     KEEP = "KEEP"  # Strategy to keep the URIs
     IGNORE = "IGNORE"  # Strategy to ignore the Namespace and get only the local part
+
+
+class HANDLE_MULTIVAL_STRATEGY(Enum):
+    """
+    Enum class defining different strategies for handling multiple values.
+
+    - OVERWRITE:  Strategy to overwrite multiple values
+    - ARRAY:  Strategy to treat multiple values as an array
+
+    TO NOTICE : If the strategy is ARRAY and the Neo4jStoreConfig doesn't contain any predicate marked as multivalued, EVERY field will be treated as multivalued.
+    """
+    OVERWRITE = 1  # Strategy to overwrite multiple values
+    ARRAY = 2  # Strategy to treat multiple values as an array
 
 
 def handle_vocab_uri_ignore(predicate):
@@ -151,9 +170,13 @@ def handle_vocab_uri(mappings: Dict[str, str],
     Handles the given predicate URI based on the chosen strategy.
 
     Parameters:
+
     - mappings: A dictionary mapping URIs to their mapped values.
+
     - predicate: The predicate URI to be handled.
+
     - prefixes: A dictionary containing namespace prefixes.
+
     - strategy: The strategy to be used for handling the predicate URI.
 
     Returns:
@@ -173,9 +196,3 @@ def handle_vocab_uri(mappings: Dict[str, str],
     raise Exception(f"Strategy {strategy} not defined.")
 
 
-class HANDLE_MULTIVAL_STRATEGY(Enum):
-    """
-    Enum class defining different strategies for handling multiple values.
-    """
-    OVERWRITE = 1  # Strategy to overwrite multiple values
-    ARRAY = 2  # Strategy to treat multiple values as an array
