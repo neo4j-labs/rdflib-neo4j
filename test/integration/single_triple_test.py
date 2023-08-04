@@ -5,7 +5,7 @@ from rdflib.namespace import FOAF
 import os
 from dotenv import load_dotenv
 
-from tests.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
+from test.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
     cleanup_databases
 
 N10S_PROC_DB = "neo4j"

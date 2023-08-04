@@ -1,10 +1,10 @@
 from neo4j import Record
-from rdflib import Graph, Namespace
+from rdflib import Graph
 from testcontainers.neo4j import Neo4jContainer
 
 from rdflib_neo4j.Neo4jStore import Neo4jStore
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
-from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
+from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY
 import os
 from dotenv import load_dotenv
 
@@ -52,7 +52,7 @@ def read_file_n10s_and_rdflib(neo4j_driver, graph_store, batching=False, n10s_pa
         n10s_params = {"handleVocabUris": "IGNORE"}
 
     g = Graph()
-    g.parse(os.path.join(os.path.dirname(os.path.realpath(__file__)), "./../test_files/n10s_example.ttl"))
+    g.parse(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../test_files/n10s_example.ttl"))
     rdf_payload = g.serialize(format='ttl')
 
     neo4j_driver.execute_query("CALL n10s.graphconfig.init($params)", params=n10s_params)

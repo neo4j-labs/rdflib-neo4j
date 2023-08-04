@@ -1,7 +1,7 @@
 import pytest
 from neo4j import GraphDatabase
 from testcontainers.neo4j import Neo4jContainer
-from tests.integration.utils import create_graph_store
+from test.integration.utils import create_graph_store
 import os
 from dotenv import load_dotenv
 

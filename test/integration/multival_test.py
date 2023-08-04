@@ -1,15 +1,12 @@
 import pytest
-from neo4j import GraphDatabase
 from rdflib import Graph, Namespace
-from testcontainers.neo4j import Neo4jContainer
-
 from rdflib_neo4j.Neo4jStore import Neo4jStore
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
-from tests.integration.utils import records_equal, read_file_n10s_and_rdflib, create_graph_store, get_credentials
+from test.integration.utils import records_equal, read_file_n10s_and_rdflib, create_graph_store, get_credentials
 from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
 import os
 from dotenv import load_dotenv
-from tests.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
+from test.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
     cleanup_databases
 
 N10S_PROC_DB = "neo4j"
