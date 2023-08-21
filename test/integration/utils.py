@@ -72,8 +72,8 @@ def read_file_n10s_and_rdflib(neo4j_driver, graph_store, batching=False, n10s_pa
     records_from_rdf_lib, summary, keys = neo4j_driver.execute_query(GET_NODES_PROPS_QUERY, database_=RDFLIB_DB)
     n10s_rels, rdflib_rels = None, None
     if get_rels:
-        n10s_rels,summary, keys = neo4j_driver.execute_query(GET_RELS_QUERY)
-        rdflib_rels,summary, keys = neo4j_driver.execute_query(GET_RELS_QUERY, database_=RDFLIB_DB)
+        n10s_rels, summary, keys = neo4j_driver.execute_query(GET_RELS_QUERY)
+        rdflib_rels, summary, keys = neo4j_driver.execute_query(GET_RELS_QUERY, database_=RDFLIB_DB)
     return records_from_rdf_lib, records, rdflib_rels, n10s_rels
 
 
@@ -113,6 +113,7 @@ def config_graph_store(auth_data, batching=False):
 
     g = Graph(store=Neo4jStore(config=config))
     return g
+
 
 def get_credentials(local, neo4j_container):
     if local:
