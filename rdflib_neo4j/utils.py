@@ -194,5 +194,3 @@ def handle_vocab_uri(mappings: Dict[str, str],
     elif strategy == HANDLE_VOCAB_URI_STRATEGY.IGNORE:
         return handle_vocab_uri_ignore(predicate)
     raise Exception(f"Strategy {strategy} not defined.")
-
-

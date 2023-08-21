@@ -13,6 +13,7 @@ DEFAULT_PREFIXES = {
 }
 
 NEO4J_AUTH_REQUIRED_FIELDS = ["uri", "database", "user", "pwd"]
+NEO4J_DRIVER_USER_AGENT_NAME = "neo4j_labs_n10s_client_lib"
 
 
 class PrefixNotFoundException(Exception):

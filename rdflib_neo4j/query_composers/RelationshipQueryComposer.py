@@ -29,11 +29,12 @@ class RelationshipQueryComposer:
 
     def add_query_param(self, from_node, to_node):
         """
-        Adds a query parameter consisting of 'from' and 'to' nodes.
+        Adds a query parameter consisting of 'from' (The URI of the node at the start of the relationship)
+            and 'to' (The URI of the node at the end of the relationship).
 
         Args:
-            from_node: The 'from' node.
-            to_node: The 'to' node.
+            from_node: The 'from' node (The URI of the node at the start of the relationship).
+            to_node: The 'to' node (The URI of the node at the end of the relationship).
         """
         self.query_params.append({"from": from_node, "to": to_node})
 
@@ -51,7 +52,7 @@ class RelationshipQueryComposer:
         q += f''' MERGE (from)-[r:`{self.rel_type}`]->(to)'''
         if self.props:
             raise NotImplemented
-            q += f'''SET {', '.join([f"""r.`{prop}` = coalesce(param["{prop}"],null)""" for prop in self.props])}'''
+            # q += f'''SET {', '.join([f"""r.`{prop}` = coalesce(param["{prop}"],null)""" for prop in self.props])}'''
         return q
 
     def is_redundant(self):

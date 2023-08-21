@@ -1,4 +1,3 @@
-from abc import ABC
 from typing import Dict
 
 from rdflib.store import Store
@@ -8,6 +7,7 @@ import logging
 
 from rdflib_neo4j.Neo4jTriple import Neo4jTriple
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
+from rdflib_neo4j.config.const import NEO4J_DRIVER_USER_AGENT_NAME
 from rdflib_neo4j.query_composers.NodeQueryComposer import NodeQueryComposer
 from rdflib_neo4j.query_composers.RelationshipQueryComposer import RelationshipQueryComposer
 
@@ -16,22 +16,22 @@ __all__ = ["Neo4jStore"]
 
 class Neo4jStore(Store):
 
-    def __init__(self, config: Neo4jStoreConfig, identifier=None):
+    def __init__(self, config: Neo4jStoreConfig):
         self.__open = False
         self.driver = None
         self.session = None
         self.config = config
         super(Neo4jStore, self).__init__(config.get_config_dict())
-        self.current_subject: Neo4jTriple = None
+
         self.batching = config.batching
-        self.total_triples = 0
         self.buffer_max_size = config.batch_size
+
+        self.total_triples = 0
         self.node_buffer_size = 0
         self.rel_buffer_size = 0
         self.node_buffer: Dict[str, NodeQueryComposer] = {}
         self.rel_buffer: Dict[str, RelationshipQueryComposer] = {}
-        self.__namespace = {}
-        self.__prefix = {}
+        self.current_subject: Neo4jTriple | None = None
         self.mappings = config.custom_mappings
         self.statistics = {"node_count": 0, "rel_count": 0}
         self.handle_vocab_uri_strategy = config.handle_vocab_uri_strategy
@@ -48,7 +48,8 @@ class Neo4jStore(Store):
         auth_data = self.config.auth_data
         self.driver = GraphDatabase.driver(
             auth_data['uri'],
-            auth=(auth_data['user'], auth_data['pwd'])
+            auth=(auth_data['user'], auth_data['pwd']),
+            user_agent=NEO4J_DRIVER_USER_AGENT_NAME
         )
         self.session = self.driver.session(
             database=auth_data.get('database', 'neo4j'),
@@ -141,7 +142,6 @@ class Neo4jStore(Store):
         print(f"IMPORTED {self.total_triples} TRIPLES")
         print(f"TOTAL FLUSHED: NODES: {self.statistics['node_count']} RELATIONSHIPS: {self.statistics['rel_count']}")
 
-
     def store_current_subject_props(self):
         """
         Stores the properties of the current subject in the respective node buffer.
@@ -186,7 +186,8 @@ class Neo4jStore(Store):
 
     def create_current_subject(self, subject):
         return Neo4jTriple(uri=subject,
-                           prefixes={value: key for key, value in self.config.get_prefixes().items()}, # Reversing the Prefix dictionary
+                           prefixes={value: key for key, value in self.config.get_prefixes().items()},
+                           # Reversing the Prefix dictionary
                            handle_vocab_uri_strategy=self.handle_vocab_uri_strategy,
                            handle_multival_strategy=self.handle_multival_strategy,
                            multival_props_names=self.multival_props_predicates)
@@ -311,4 +312,3 @@ class Neo4jStore(Store):
             print(e)
             logging.error(e)
             raise e
-

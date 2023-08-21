@@ -36,6 +36,7 @@ class NodeQueryComposer:
 
         Args:
             props: The properties to add.
+            multi: If the property should be treated as multivalued. Default: False
         """
         if not multi:
             self.props.update(props)
