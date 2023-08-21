@@ -1,20 +1,13 @@
 import pytest
 from neo4j import GraphDatabase
 from testcontainers.neo4j import Neo4jContainer
+
+from test.integration.constants import LOCAL, N10S_CONSTRAINT_QUERY, RDFLIB_DB
 from test.integration.utils import create_graph_store
 import os
-from dotenv import load_dotenv
-
-N10S_PROC_DB = "neo4j"
-RDFLIB_DB = "rdflib"
-N10S_CONSTRAINT_QUERY = "CREATE CONSTRAINT n10s_unique_uri IF NOT EXISTS FOR (r:Resource) REQUIRE r.uri IS UNIQUE"
-GET_DATA_QUERY = "MATCH (n:Resource) RETURN n.uri as uri, labels(n) as labels, properties(n) as props ORDER BY uri"
-LOCAL = (os.getenv("RUN_TEST_LOCALLY", "False").lower() == "true")
-
-load_dotenv()
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def neo4j_container():
     if not LOCAL:
         container = Neo4jContainer(image="neo4j:5.7.0-enterprise") \

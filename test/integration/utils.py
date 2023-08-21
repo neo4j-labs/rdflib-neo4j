@@ -6,13 +6,8 @@ from rdflib_neo4j.Neo4jStore import Neo4jStore
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
 from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY
 import os
-from dotenv import load_dotenv
 
-RDFLIB_DB = "rdflib"
-N10S_CONSTRAINT_QUERY = "CREATE CONSTRAINT n10s_unique_uri IF NOT EXISTS FOR (r:Resource) REQUIRE r.uri IS UNIQUE"
-GET_NODES_PROPS_QUERY = "MATCH (n:Resource) RETURN n.uri as uri, labels(n) as labels, properties(n) as props ORDER BY uri"
-GET_RELS_QUERY = "MATCH (n:Resource)-[r]->(n2:Resource) RETURN  n.uri as nuri, n2.uri as n2uri,type(r) as type ORDER by nuri,n2uri"
-load_dotenv()
+from test.integration.constants import RDFLIB_DB, GET_NODES_PROPS_QUERY, GET_RELS_QUERY
 
 
 def records_equal(record1: Record, record2: Record, rels=False):
