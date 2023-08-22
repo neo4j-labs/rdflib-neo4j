@@ -2,10 +2,9 @@ from rdflib import Graph, Namespace
 
 from rdflib_neo4j.Neo4jStore import Neo4jStore
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
-from rdflib_neo4j.config.const import ShortenStrictException
+from rdflib_neo4j.config.const import ShortenStrictException, HANDLE_VOCAB_URI_STRATEGY
 from test.integration.constants import LOCAL
 from test.integration.utils import records_equal, read_file_n10s_and_rdflib, get_credentials
-from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY
 import pytest
 from test.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
     cleanup_databases
@@ -96,11 +95,8 @@ def test_keep_strategy(neo4j_container, neo4j_driver):
                               handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.KEEP,
                               batching=False)
 
-
     graph_store = Graph(store=Neo4jStore(config=config))
     n10s_params = {"handleVocabUris": "KEEP"}
-
-
 
     records_from_rdf_lib, records, rels_from_rdflib, rels = read_file_n10s_and_rdflib(neo4j_driver, graph_store,
                                                                                       n10s_params=n10s_params,
@@ -117,23 +113,18 @@ def test_ignore_strategy(neo4j_container, neo4j_driver):
     auth_data = get_credentials(LOCAL, neo4j_container)
 
     config = Neo4jStoreConfig(auth_data=auth_data,
-                          handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
-                          batching=False)
-
+                              handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+                              batching=False)
 
     graph_store = Graph(store=Neo4jStore(config=config))
     n10s_params = {"handleVocabUris": "IGNORE"}
 
-
-
     records_from_rdf_lib, records, rels_from_rdflib, rels = read_file_n10s_and_rdflib(neo4j_driver, graph_store,
-                                                                                  n10s_params=n10s_params,
-                                                                                  get_rels=True)
+                                                                                      n10s_params=n10s_params,
+                                                                                      get_rels=True)
     assert len(records_from_rdf_lib) == len(records)
     for i in range(len(records)):
         assert records_equal(records[i], records_from_rdf_lib[i])
     assert len(rels_from_rdflib) == len(rels)
     for i in range(len(rels)):
         assert records_equal(rels[i], rels_from_rdflib[i], rels=True)
-
-# TODO: add test for each strategy in HANDLE_VOCAB_URI_STRATEGY

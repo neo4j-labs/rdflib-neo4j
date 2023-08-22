@@ -4,7 +4,7 @@ from testcontainers.neo4j import Neo4jContainer
 
 from rdflib_neo4j.Neo4jStore import Neo4jStore
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
-from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY
+from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY
 import os
 
 from test.integration.constants import RDFLIB_DB, GET_NODES_PROPS_QUERY, GET_RELS_QUERY

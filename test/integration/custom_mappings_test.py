@@ -4,7 +4,7 @@ from rdflib_neo4j.Neo4jStore import Neo4jStore
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
 from test.integration.constants import LOCAL
 from test.integration.utils import records_equal, read_file_n10s_and_rdflib, get_credentials
-from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY
+from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY
 import os
 from dotenv import load_dotenv
 from test.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
