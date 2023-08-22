@@ -206,11 +206,18 @@ Here a series of examples of the application of a strategy on a certain triplet.
 
 === Shorten
 
+This strategy will shorten the URIs, replacing the prefix with its shorted version. If the Store find a prefix not defined inside its Neo4jStoreConfig object, the parsing will stop, raising a ShortenStrictException error.
+
 === Map
+
 
 === Keep
 
+This strategy will keep the predicate as it is by preserving its prefix
+
 === Ignore
+
+This strategy will remove the entire prefix from the predicate.
 
 === HANDLE_MULTIVAL_STRATEGY
 
@@ -224,6 +231,13 @@ TO NOTICE: If the strategy is ARRAY and the Neo4jStoreConfig doesn't contain any
 | Name | Description
 | OVERWRITE | Strategy to overwrite multiple values
 | ARRAY | Strategy to treat multiple values as an array
-
-
 |===
+
+=== Examples
+
+Here a series of examples of the application of a strategy on a certain triplet.
+
+=== Overwrite
+
+
+=== Map
