@@ -38,7 +38,7 @@ class Neo4jStore(Store):
         self.handle_multival_strategy = config.handle_multival_strategy
         self.multival_props_predicates = config.multival_props_names
 
-    def create_session(self):
+    def __create_session(self):
         """
         Creates the Neo4j session and driver.
 
@@ -56,7 +56,7 @@ class Neo4jStore(Store):
             default_access_mode=WRITE_ACCESS
         )
 
-    def constraint_check(self, create):
+    def __constraint_check(self, create):
         """
         Checks the existence of a uniqueness constraint on the `Resource` node with the `uri` property.
 
@@ -102,11 +102,11 @@ class Neo4jStore(Store):
             create (bool): Flag indicating whether to create the uniqueness constraint if not found.
 
         """
-        self.create_session()
-        self.constraint_check(create)
-        self.set_open(True)
+        self.__create_session()
+        self.__constraint_check(create)
+        self.__set_open(True)
 
-    def set_open(self, val: bool):
+    def __set_open(self, val: bool):
         """
         Sets the 'open' status of the store.
 
@@ -138,11 +138,11 @@ class Neo4jStore(Store):
                 self.commit(only_rels=True)
         self.session.close()
         self.driver.close()
-        self.set_open(False)
+        self.__set_open(False)
         print(f"IMPORTED {self.total_triples} TRIPLES")
         print(f"TOTAL FLUSHED: NODES: {self.statistics['node_count']} RELATIONSHIPS: {self.statistics['rel_count']}")
 
-    def store_current_subject_props(self):
+    def __store_current_subject_props(self):
         """
         Stores the properties of the current subject in the respective node buffer.
 
@@ -160,7 +160,7 @@ class Neo4jStore(Store):
         self.node_buffer[label_key].add_query_param(query_params)
         self.node_buffer_size += 1
 
-    def store_current_subject_rels(self):
+    def __store_current_subject_rels(self):
         """
         Stores the relationships of the current subject in the respective relationship buffer.
 
@@ -175,16 +175,16 @@ class Neo4jStore(Store):
                     self.rel_buffer[rel_type].add_query_param(from_node=self.current_subject.uri, to_node=to_node)
                     self.rel_buffer_size += 1
 
-    def store_current_subject(self):
+    def __store_current_subject(self):
         """
         Stores the current subject in the respective buffers.
 
         This function stores the current subject's properties and relationships in the respective buffers.
         """
-        self.store_current_subject_props()
-        self.store_current_subject_rels()
+        self.__store_current_subject_props()
+        self.__store_current_subject_rels()
 
-    def create_current_subject(self, subject):
+    def __create_current_subject(self, subject):
         return Neo4jTriple(uri=subject,
                            prefixes={value: key for key, value in self.config.get_prefixes().items()},
                            # Reversing the Prefix dictionary
@@ -192,7 +192,7 @@ class Neo4jStore(Store):
                            handle_multival_strategy=self.handle_multival_strategy,
                            multival_props_names=self.multival_props_predicates)
 
-    def check_current_subject(self, subject):
+    def __check_current_subject(self, subject):
         """
         Checks the current subject and stores the previous subject if it has changed.
 
@@ -203,11 +203,11 @@ class Neo4jStore(Store):
             subject: The subject to check.
         """
         if self.current_subject is None:
-            self.current_subject = self.create_current_subject(subject)
+            self.current_subject = self.__create_current_subject(subject)
         else:
             if self.current_subject.uri != subject:
-                self.store_current_subject()
-                self.current_subject = self.create_current_subject(subject)
+                self.__store_current_subject()
+                self.current_subject = self.__create_current_subject(subject)
 
     def add(self, triple, context=None, quoted=False):
         """
@@ -224,7 +224,7 @@ class Neo4jStore(Store):
         # Unpacking the triple
         (subject, predicate, object) = triple
 
-        self.check_current_subject(subject=subject)
+        self.__check_current_subject(subject=subject)
         self.current_subject.parse_triple(triple=triple, mappings=self.mappings)
         self.total_triples += 1
 
@@ -254,7 +254,7 @@ class Neo4jStore(Store):
         """
         # To prevent edge cases for the last declaration in the file.
         if self.current_subject:
-            self.store_current_subject()
+            self.__store_current_subject()
             self.current_subject = None
         self.__flushBuffer(only_nodes, only_rels)
 
@@ -281,7 +281,7 @@ class Neo4jStore(Store):
             if not cur.is_redundant():
                 query = cur.write_query()
                 params = cur.query_params
-                self.query_database(query=query, params=params)
+                self.__query_database(query=query, params=params)
                 self.statistics["node_count"] += len(cur.query_params)
                 cur.empty_query_params()
         self.node_buffer_size = 0
@@ -295,12 +295,12 @@ class Neo4jStore(Store):
             if not cur.is_redundant():
                 query = cur.write_query()
                 params = cur.query_params
-                self.query_database(query=query, params=params)
+                self.__query_database(query=query, params=params)
                 self.statistics["rel_count"] += len(cur.query_params)
                 cur.empty_query_params()
         self.rel_buffer_size = 0
 
-    def query_database(self, query, params):
+    def __query_database(self, query, params):
         """
         Executes a Cypher query on the Neo4j database.
 
