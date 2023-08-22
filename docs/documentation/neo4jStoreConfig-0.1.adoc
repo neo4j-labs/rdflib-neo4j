@@ -13,7 +13,7 @@ This object is used to configure the Neo4j Store to connect to your Neo4j Instan
 | custom_prefixes | Dictionary | True if handle_vocab_uri_strategy ==  HANDLE_VOCAB_URI_STRATEGY.SHORTEN | {} (empty dictionary) | A dictionary containing custom prefixes.
 | handle_vocab_uri_strategy | HANDLE_VOCAB_URI_STRATEGY | False | HANDLE_VOCAB_URI_STRATEGY.SHORTEN | The strategy to handle vocabulary URIs.
 | handle_multival_strategy | HANDLE_MULTIVAL_STRATEGY | False | HANDLE_MULTIVAL_STRATEGY.OVERWRITE | The strategy to handle multivalued properties.
-| multival_props_names | List[Tuple[Str,Str]] |  | | A list of tuples containing the prefix and property names to be treated as multivalued in the form (prefix, property_name).
+| multival_props_names | List[Tuple[Str,Str]] | False | [] (empty list) | A list of tuples containing the prefix and property names to be treated as multivalued in the form (prefix, property_name).
 |===
 
 == Functions
@@ -216,6 +216,8 @@ Here a series of examples of the application of a strategy on a certain triplet.
 
 Enum class defining different strategies for handling multiple values.
 
+TO NOTICE: If the strategy is ARRAY and the Neo4jStoreConfig doesn't contain any predicate marked as multivalued, EVERY field will be treated as multivalued.
+
 ==== Possible Values
 
 |===
@@ -223,5 +225,5 @@ Enum class defining different strategies for handling multiple values.
 | OVERWRITE | Strategy to overwrite multiple values
 | ARRAY | Strategy to treat multiple values as an array
 
-| TO NOTICE | If the strategy is ARRAY and the Neo4jStoreConfig doesn't contain any predicate marked as multivalued, EVERY field will be treated as multivalued.
+
 |===
