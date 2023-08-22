@@ -3,8 +3,8 @@ from decimal import Decimal
 from typing import Dict, Set, List
 from rdflib import Literal, URIRef, RDF
 from rdflib.term import Node
-
-from rdflib_neo4j.utils import handle_vocab_uri, HANDLE_MULTIVAL_STRATEGY, HANDLE_VOCAB_URI_STRATEGY
+from rdflib_neo4j.utils import handle_vocab_uri
+from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
 
 
 class Neo4jTriple:

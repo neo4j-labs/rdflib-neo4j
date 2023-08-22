@@ -1,6 +1,6 @@
 from typing import Set, List, Dict
 
-from rdflib_neo4j.utils import HANDLE_MULTIVAL_STRATEGY
+from rdflib_neo4j.config.const import HANDLE_MULTIVAL_STRATEGY
 
 
 def prop_query_append(prop):

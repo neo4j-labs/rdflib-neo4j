@@ -293,7 +293,9 @@ class Neo4jStore(Store):
         for key in self.rel_buffer:
             cur = self.rel_buffer[key]
             if not cur.is_redundant():
-                self.query_database(cur.write_query(), cur.query_params)
+                query = cur.write_query()
+                params = cur.query_params
+                self.query_database(query=query, params=params)
                 self.statistics["rel_count"] += len(cur.query_params)
                 cur.empty_query_params()
         self.rel_buffer_size = 0

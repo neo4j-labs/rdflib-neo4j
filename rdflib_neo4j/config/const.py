@@ -1,3 +1,5 @@
+from enum import Enum
+
 DEFAULT_PREFIXES = {
     "skos": "http://www.w3.org/2004/02/skos/core#",
     "sch": "http://schema.org/",
@@ -48,3 +50,32 @@ class WrongAuthenticationException(Exception):
     def __str__(self):
         return f"""Missing {self.param_name} key inside the authentication definition. Remember that it should contain the following keys:
                 : [uri, database, user, pwd]"""
+
+
+class HANDLE_VOCAB_URI_STRATEGY(Enum):
+    """
+    Enum class defining different strategies for handling vocabulary URIs.
+
+    - SHORTEN : Strategy to shorten the URIs (Every prefix that you will use must be defined in the config, otherwise Neo4jStore will throw a ShortenStrictException)
+    - MAP : Strategy to map the URIs using provided mappings
+    - KEEP : Strategy to keep the URIs
+    - IGNORE : Strategy to ignore the Namespace and get only the local part
+
+    """
+    SHORTEN = "SHORTEN"  # Strategy to shorten the URIs
+    MAP = "MAP"  # Strategy to map the URIs using provided mappings
+    KEEP = "KEEP"  # Strategy to keep the URIs
+    IGNORE = "IGNORE"  # Strategy to ignore the Namespace and get only the local part
+
+
+class HANDLE_MULTIVAL_STRATEGY(Enum):
+    """
+    Enum class defining different strategies for handling multiple values.
+
+    - OVERWRITE:  Strategy to overwrite multiple values
+    - ARRAY:  Strategy to treat multiple values as an array
+
+    TO NOTICE : If the strategy is ARRAY and the Neo4jStoreConfig doesn't contain any predicate marked as multivalued, EVERY field will be treated as multivalued.
+    """
+    OVERWRITE = 1  # Strategy to overwrite multiple values
+    ARRAY = 2  # Strategy to treat multiple values as an array
