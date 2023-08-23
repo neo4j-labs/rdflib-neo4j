@@ -44,10 +44,10 @@ Adds a triple to the Neo4j store. It requires an opened store to work.
 ==== Arguments
 
 |===
-| Name | Type | Description
-| triple | Tuple | The triple to add.
-| context | | The context of the triple (default: None). Kept to respect the signature but currently not used.
-| quoted | bool | Flag indicating whether the triple is quoted (default: False). Kept to respect the signature but currently not used.
+| Name | Type | Default | Description
+| triple | Tuple |N/A| The triple to add.
+| context | |N/A| The context of the triple (default: None). Kept to respect the signature but currently not used.
+| quoted | bool |N/A| Flag indicating whether the triple is quoted (default: False). Kept to respect the signature but currently not used.
 |===
 
 === commit
@@ -57,9 +57,21 @@ Commits the currently stored nodes/relationships to the Neo4j database.
 ==== Arguments
 
 |===
-| Name | Type | Description
-| only_nodes | bool | Flag indicating whether to commit only nodes.
-| only_rels | bool | Flag indicating whether to commit only relationships.
+| Name | Type |Default| Description
+| commit_nodes | bool | False | Flag indicating whether to commit the nodes in the buffer.
+| commit_rels | bool | False | Flag indicating whether to commit the relationships in the buffer.
 |===
+
+=== close
+
+Closes the store. If the field _batching_ is set to True in the Neo4jStoreConfig, remember to close the store to prevent the loss of any uncommitted records.
+
+==== Arguments
+
+|===
+| Name | Type | Default | Description
+| commit_pending_transaction | bool | True | Flag indicating whether to commit any pending transaction before closing.
+|===
+
 
 

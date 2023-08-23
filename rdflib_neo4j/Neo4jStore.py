@@ -82,25 +82,25 @@ class Neo4jStore(Store):
         # If batching, we push whenever the buffers are filled with enough data
         if self.batching:
             if self.node_buffer_size >= self.buffer_max_size:
-                self.commit(only_nodes=True)
+                self.commit(commit_nodes=True)
             if self.rel_buffer_size >= self.buffer_max_size:
-                self.commit(only_rels=True)
+                self.commit(commit_rels=True)
         else:
             self.commit()
 
-    def commit(self, only_nodes=False, only_rels=False):
+    def commit(self, commit_nodes=False, commit_rels=False):
         """
         Commits the changes to the Neo4j database.
 
         Args:
-            only_nodes (bool): Flag indicating whether to commit only nodes.
-            only_rels (bool): Flag indicating whether to commit only relationships.
+            commit_nodes (bool): Flag indicating whether to commit the nodes in the buffer.
+            commit_rels (bool): Flag indicating whether to commit the relationships in the buffer.
         """
         # To prevent edge cases for the last declaration in the file.
         if self.current_subject:
             self.__store_current_subject()
             self.current_subject = None
-        self.__flushBuffer(only_nodes, only_rels)
+        self.__flushBuffer(commit_nodes, commit_rels)
 
     def remove(self, triple, context=None, txn=None):
         raise NotImplemented("This is a streamer so it doesn't preserve the state, there is no removal feature.")
@@ -114,9 +114,9 @@ class Neo4jStore(Store):
         """
         if commit_pending_transaction:
             if self.node_buffer_size > 0:
-                self.commit(only_nodes=True)
+                self.commit(commit_nodes=True)
             if self.rel_buffer_size > 0:
-                self.commit(only_rels=True)
+                self.commit(commit_rels=True)
         self.session.close()
         self.driver.close()
         self.__set_open(False)
