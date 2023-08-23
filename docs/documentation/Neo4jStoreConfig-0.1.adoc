@@ -62,11 +62,7 @@ Set a default prefix.
 Get a dictionary containing all prefixes (default and custom).
 
 ==== Arguments
-
-|===
-| Name | Type | Description
-| | | No arguments.
-|===
+No arguments
 
 ==== Output
 
