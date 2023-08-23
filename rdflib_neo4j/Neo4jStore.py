@@ -31,12 +31,106 @@ class Neo4jStore(Store):
         self.rel_buffer_size = 0
         self.node_buffer: Dict[str, NodeQueryComposer] = {}
         self.rel_buffer: Dict[str, RelationshipQueryComposer] = {}
-        self.current_subject: Neo4jTriple | None = None
+        self.current_subject: Neo4jTriple = None
         self.mappings = config.custom_mappings
         self.statistics = {"node_count": 0, "rel_count": 0}
         self.handle_vocab_uri_strategy = config.handle_vocab_uri_strategy
         self.handle_multival_strategy = config.handle_multival_strategy
         self.multival_props_predicates = config.multival_props_names
+
+    def open(self, configuration, create=True):
+        """
+        Opens a connection to the Neo4j database.
+
+        Args:
+            configuration: The configuration for the Neo4j database. (Not used, just kept for the method declaration in the Store class)
+            create (bool): Flag indicating whether to create the uniqueness constraint if not found.
+
+        """
+        self.__create_session()
+        self.__constraint_check(create)
+        self.__set_open(True)
+
+    def is_open(self):
+        """
+        Checks if the store is open.
+
+        Returns:
+            bool: True if the store is open, False otherwise.
+        """
+        return self.__open
+
+    def add(self, triple, context=None, quoted=False):
+        """
+        Adds a triple to the Neo4j store.
+
+        Args:
+            triple: The triple to add.
+            context: The context of the triple (default: None).
+            quoted (bool): Flag indicating whether the triple is quoted (default: False).
+        """
+        assert self.is_open(), "The Store must be open."
+        assert context != self, "Can not add triple directly to store"
+
+        # Unpacking the triple
+        (subject, predicate, object) = triple
+
+        self.__check_current_subject(subject=subject)
+        self.current_subject.parse_triple(triple=triple, mappings=self.mappings)
+        self.total_triples += 1
+
+        # If batching, we push whenever the buffers are filled with enough data
+        if self.batching:
+            if self.node_buffer_size >= self.buffer_max_size:
+                self.commit(only_nodes=True)
+            if self.rel_buffer_size >= self.buffer_max_size:
+                self.commit(only_rels=True)
+        else:
+            self.commit()
+
+    def commit(self, only_nodes=False, only_rels=False):
+        """
+        Commits the changes to the Neo4j database.
+
+        Args:
+            only_nodes (bool): Flag indicating whether to commit only nodes.
+            only_rels (bool): Flag indicating whether to commit only relationships.
+        """
+        # To prevent edge cases for the last declaration in the file.
+        if self.current_subject:
+            self.__store_current_subject()
+            self.current_subject = None
+        self.__flushBuffer(only_nodes, only_rels)
+
+    def remove(self, triple, context=None, txn=None):
+        raise NotImplemented("This is a streamer so it doesn't preserve the state, there is no removal feature.")
+
+    def close(self, commit_pending_transaction=True):
+        """
+        Closes the store.
+
+        Args:
+            commit_pending_transaction (bool): Flag indicating whether to commit any pending transaction before closing.
+        """
+        if commit_pending_transaction:
+            if self.node_buffer_size > 0:
+                self.commit(only_nodes=True)
+            if self.rel_buffer_size > 0:
+                self.commit(only_rels=True)
+        self.session.close()
+        self.driver.close()
+        self.__set_open(False)
+        print(f"IMPORTED {self.total_triples} TRIPLES")
+        print(f"TOTAL FLUSHED: NODES: {self.statistics['node_count']} RELATIONSHIPS: {self.statistics['rel_count']}")
+
+    def __set_open(self, val: bool):
+        """
+        Sets the 'open' status of the store.
+
+        Args:
+            val (bool): The value to set for the 'open' status.
+        """
+        self.__open = val
 
     def __create_session(self):
         """
@@ -66,13 +160,13 @@ class Neo4jStore(Store):
         """
         # Test connectivity to backend and check that constraint on :Resource(uri) is present
         constraint_check = """
-        SHOW CONSTRAINTS YIELD * 
-        WHERE type = "UNIQUENESS" 
-            AND entityType = "NODE" 
-            AND labelsOrTypes = ["Resource"] 
-            AND properties = ["uri"] 
-        RETURN COUNT(*) = 1 AS constraint_found
-        """
+           SHOW CONSTRAINTS YIELD * 
+           WHERE type = "UNIQUENESS" 
+               AND entityType = "NODE" 
+               AND labelsOrTypes = ["Resource"] 
+               AND properties = ["uri"] 
+           RETURN COUNT(*) = 1 AS constraint_found
+           """
         result = self.session.run(constraint_check)
         constraint_found = next((True for x in result if x["constraint_found"]), False)
 
@@ -80,8 +174,8 @@ class Neo4jStore(Store):
             try:
                 # Create the uniqueness constraint
                 create_constraint = """
-                CREATE CONSTRAINT n10s_unique_uri IF NOT EXISTS FOR (r:Resource) REQUIRE r.uri IS UNIQUE
-                """
+                   CREATE CONSTRAINT n10s_unique_uri IF NOT EXISTS FOR (r:Resource) REQUIRE r.uri IS UNIQUE
+                   """
                 self.session.run(create_constraint)
                 print("Uniqueness constraint on :Resource(uri) is created.")
             except Exception as e:
@@ -89,58 +183,9 @@ class Neo4jStore(Store):
                 print("Exception: ", e)
         else:
             print(f"""Uniqueness constraint on :Resource(uri) {"" if constraint_found else "not "}found. 
-            {"" if constraint_found else "Run the following command on the Neo4j DB to create the constraint: "
-                                         "CREATE CONSTRAINT n10s_unique_uri FOR (r:Resource) REQUIRE r.uri IS UNIQUE. Or provide create=True to create it."} 
-             """)
-
-    def open(self, db_config, create=True):
-        """
-        Opens a connection to the Neo4j database.
-
-        Args:
-            db_config: The configuration for the Neo4j database. (Not used, just kept for the method declaration in the Store class)
-            create (bool): Flag indicating whether to create the uniqueness constraint if not found.
-
-        """
-        self.__create_session()
-        self.__constraint_check(create)
-        self.__set_open(True)
-
-    def __set_open(self, val: bool):
-        """
-        Sets the 'open' status of the store.
-
-        Args:
-            val (bool): The value to set for the 'open' status.
-        """
-        self.__open = val
-
-    def is_open(self):
-        """
-        Checks if the store is open.
-
-        Returns:
-            bool: True if the store is open, False otherwise.
-        """
-        return self.__open
-
-    def close(self, commit_pending_transaction=True):
-        """
-        Closes the store.
-
-        Args:
-            commit_pending_transaction (bool): Flag indicating whether to commit any pending transaction before closing.
-        """
-        if commit_pending_transaction:
-            if self.node_buffer_size > 0:
-                self.commit(only_nodes=True)
-            if self.rel_buffer_size > 0:
-                self.commit(only_rels=True)
-        self.session.close()
-        self.driver.close()
-        self.__set_open(False)
-        print(f"IMPORTED {self.total_triples} TRIPLES")
-        print(f"TOTAL FLUSHED: NODES: {self.statistics['node_count']} RELATIONSHIPS: {self.statistics['rel_count']}")
+               {"" if constraint_found else "Run the following command on the Neo4j DB to create the constraint: "
+                                            "CREATE CONSTRAINT n10s_unique_uri FOR (r:Resource) REQUIRE r.uri IS UNIQUE. Or provide create=True to create it."} 
+                """)
 
     def __store_current_subject_props(self):
         """
@@ -209,54 +254,9 @@ class Neo4jStore(Store):
                 self.__store_current_subject()
                 self.current_subject = self.__create_current_subject(subject)
 
-    def add(self, triple, context=None, quoted=False):
-        """
-        Adds a triple to the Neo4j store.
-
-        Args:
-            triple: The triple to add.
-            context: The context of the triple (default: None).
-            quoted (bool): Flag indicating whether the triple is quoted (default: False).
-        """
-        assert self.is_open(), "The Store must be open."
-        assert context != self, "Can not add triple directly to store"
-
-        # Unpacking the triple
-        (subject, predicate, object) = triple
-
-        self.__check_current_subject(subject=subject)
-        self.current_subject.parse_triple(triple=triple, mappings=self.mappings)
-        self.total_triples += 1
-
-        # If batching, we push whenever the buffers are filled with enough data
-        if self.batching:
-            if self.node_buffer_size >= self.buffer_max_size:
-                self.commit(only_nodes=True)
-            if self.rel_buffer_size >= self.buffer_max_size:
-                self.commit(only_rels=True)
-        else:
-            self.commit()
-
-    def remove(self, triple, context=None, txn=None):
-        return "this is a streamer no state, no triple removal"
-
     def __len__(self, context=None):
         # no triple state, just a streamer
         return 0
-
-    def commit(self, only_nodes=False, only_rels=False):
-        """
-        Commits the changes to the Neo4j database.
-
-        Args:
-            only_nodes (bool): Flag indicating whether to commit only nodes.
-            only_rels (bool): Flag indicating whether to commit only relationships.
-        """
-        # To prevent edge cases for the last declaration in the file.
-        if self.current_subject:
-            self.__store_current_subject()
-            self.current_subject = None
-        self.__flushBuffer(only_nodes, only_rels)
 
     def __flushBuffer(self, only_nodes, only_rels):
         """
