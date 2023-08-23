@@ -1,3 +1,5 @@
+import os
+
 from rdflib import Graph, Namespace
 
 from rdflib_neo4j.Neo4jStore import Neo4jStore
@@ -82,7 +84,7 @@ def test_shorten_missing_prefix(neo4j_container, neo4j_driver):
     graph_store = Graph(store=Neo4jStore(config=config))
 
     try:
-        graph_store.parse('../test_files/n10s_example.ttl')
+        graph_store.parse(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../test_files/n10s_example.ttl"))
     except Exception as e:
         assert isinstance(e, ShortenStrictException)
     assert True
