@@ -239,5 +239,8 @@ Here a series of examples of the application of a strategy on a certain triplet.
 
 === Overwrite
 
+This strategy will overwrite the current value of a node.
 
 === Map
+
+This strategy will concat all the values encountered during the ingestion for the same subject inside an array.
