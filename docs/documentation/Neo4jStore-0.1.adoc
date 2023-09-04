@@ -19,7 +19,7 @@ Opens a connection to the Neo4j database.
 
 |===
 | Name | Type | Description
-| configuration |N/A| The configuration for the Neo4j database. (Not used, just kept for the method declaration in the Store class)
+| configuration | | The configuration for the Neo4j database. (Not used, just kept for the method declaration in the Store class)
 | create | bool | Flag indicating whether to create the uniqueness constraint if not found.
 |===
 
