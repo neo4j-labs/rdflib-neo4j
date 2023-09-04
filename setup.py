@@ -26,14 +26,14 @@ if __name__ == "__main__":
         version="0.0.1b4",
         author="Jesús Barrasa",
         author_email="jbarrasa@outlook.com",
-        description="RDFLib Store backed by neo4j",
+        description="RDFLib Store backed by Neo4j",
         keywords="neo4j, rdflib, neosemantics, n10s",
-        long_description="RDFLib Store backed by neo4j",
+        long_description="RDFLib Store backed by Neo4j",
         license="Apache 2",
         platforms="All",
         url="https://github.com/neo4j-labs/rdflib-neo4j",
         install_requires=[
-            'rdflib >= 5.0.0','neo4j >= 4.1.0',
+            'rdflib >= 7.0.0', 'neo4j >= 5.0.0',
         ],
         packages=['rdflib_neo4j'],
         entry_points={

@@ -1,19 +1,10 @@
-import pytest
 from rdflib import Graph, Literal, RDF, URIRef
 from rdflib.namespace import FOAF
+from test.integration.constants import GET_DATA_QUERY, RDFLIB_DB
 from test.integration.utils import records_equal, read_file_n10s_and_rdflib
-import os
-from dotenv import load_dotenv
+import pytest
 from test.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
     cleanup_databases
-
-N10S_PROC_DB = "neo4j"
-RDFLIB_DB = "rdflib"
-N10S_CONSTRAINT_QUERY = "CREATE CONSTRAINT n10s_unique_uri IF NOT EXISTS FOR (r:Resource) REQUIRE r.uri IS UNIQUE"
-GET_DATA_QUERY = "MATCH (n:Resource) RETURN n.uri as uri, labels(n) as labels, properties(n) as props ORDER BY uri"
-LOCAL = (os.getenv("RUN_TEST_LOCALLY", "False").lower() == "true")
-
-load_dotenv()
 
 
 def test_import_person(neo4j_driver, graph_store):

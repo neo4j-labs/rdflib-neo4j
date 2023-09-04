@@ -4,9 +4,8 @@ from rdflib_neo4j.config.const import (
     DEFAULT_PREFIXES,
     PrefixNotFoundException,
     NEO4J_AUTH_REQUIRED_FIELDS,
-    WrongAuthenticationException
+    WrongAuthenticationException, HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
 )
-from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
 
 
 def check_auth_data(auth):
@@ -25,6 +24,8 @@ def check_auth_data(auth):
     for param_name in NEO4J_AUTH_REQUIRED_FIELDS:
         if param_name not in auth:
             raise WrongAuthenticationException(param_name=param_name)
+        if not auth[param_name]:
+            raise Exception(f"The key {param_name} is defined in the authentication dict but the value is empty.")
 
 
 class Neo4jStoreConfig:
@@ -45,9 +46,9 @@ class Neo4jStoreConfig:
 
     - handle_vocab_uri_strategy: The strategy to handle vocabulary URIs (default: HANDLE_VOCAB_URI_STRATEGY.SHORTEN).
 
-    - handle_multival_strategy: The strategy to handle multiple values (default: HANDLE_MULTIVAL_STRATEGY.OVERWRITE).
+    - handle_multival_strategy: The strategy to handle multivalued properties (default: HANDLE_MULTIVAL_STRATEGY.OVERWRITE).
 
-    - multival_props_names: A list of tuples containing the prefix and property names to be treated as multivalued.
+    - multival_props_names: A list of tuples containing the prefix and property names to be treated as multivalued in the form (prefix, property_name)
     """
 
     def __init__(
@@ -135,7 +136,7 @@ class Neo4jStoreConfig:
 
     def set_custom_prefix(self, name: str, value: str):
         """
-        Set a custom prefix.
+        Add a custom prefix to the configuration.
 
         Parameters:
         - name: The name of the prefix.
@@ -145,8 +146,21 @@ class Neo4jStoreConfig:
         - Exception: If the namespace is already defined for another prefix.
         """
         if Namespace(value) in self.custom_prefixes.values():
-            raise Exception(f"Namespace {name} already defined for another prefix.")
+            raise Exception(f"Namespace {value} already defined for another prefix.")
         self.custom_prefixes[name] = Namespace(value)
+
+    def delete_custom_prefix(self, name: str):
+        """
+        Delete a custom prefix from the 'custom_prefixes' dictionary.
+
+        Args:
+            name (str): The name of the custom prefix to be deleted.
+
+        Returns:
+            None
+        """
+        if name in self.custom_prefixes:
+            del self.custom_prefixes[name]
 
     def set_custom_mapping(self, prefix_name: str, to_replace: str, new_value: str):
         """
@@ -155,15 +169,40 @@ class Neo4jStoreConfig:
         Parameters:
         - prefix_name: The name of the prefix to be mapped.
         - to_replace: The value to be replaced in the namespace URI.
-        - new_value: The new value for the mapping (namespace URI).
+        - new_value: The new value for the mapping in the namespace URI.
 
         Raises:
         - PrefixNotFoundException: If the prefix is not found in the available prefixes.
+
+        Notes:
+        - It constructs the key by combining the namespace associated with 'prefix_name' and 'to_replace'.
         """
         total_prefixes = self.get_prefixes()
         if prefix_name not in total_prefixes:
             raise PrefixNotFoundException(prefix_name=prefix_name)
         self.custom_mappings[URIRef(f'{total_prefixes[prefix_name]}{to_replace}')] = new_value
+
+    def delete_custom_mapping(self, prefix_name: str, to_replace: str):
+        """
+        Deletes a custom mapping from the custom_mappings dictionary.
+
+        Parameters:
+        - prefix_name (str): The name of the prefix to which 'to_replace' is associated.
+        - to_replace (str): The value to be replaced within the prefix's namespace.
+
+        Raises:
+        - PrefixNotFoundException: If the prefix is not found in the available prefixes.
+
+        Note:
+        - This function removes a key-value pair from the 'custom_mappings' dictionary.
+        - It constructs the key by combining the namespace associated with 'prefix_name' and 'to_replace'.
+        """
+        all_prefixes = self.get_prefixes()
+        if prefix_name not in all_prefixes:
+            raise PrefixNotFoundException(prefix_name=prefix_name)
+        key = URIRef(f'{all_prefixes[prefix_name]}{to_replace}')
+        if key in self.custom_mappings:
+            del self.custom_mappings[key]
 
     def set_auth_data(self, auth):
         """

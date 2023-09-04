@@ -1,24 +1,15 @@
-import pytest
+import os
+
 from rdflib import Graph, Namespace
 
 from rdflib_neo4j.Neo4jStore import Neo4jStore
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
-from rdflib_neo4j.config.const import ShortenStrictException
+from rdflib_neo4j.config.const import ShortenStrictException, HANDLE_VOCAB_URI_STRATEGY
+from test.integration.constants import LOCAL
 from test.integration.utils import records_equal, read_file_n10s_and_rdflib, get_credentials
-from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY
-import os
-from dotenv import load_dotenv
-
+import pytest
 from test.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
     cleanup_databases
-
-N10S_PROC_DB = "neo4j"
-RDFLIB_DB = "rdflib"
-N10S_CONSTRAINT_QUERY = "CREATE CONSTRAINT n10s_unique_uri IF NOT EXISTS FOR (r:Resource) REQUIRE r.uri IS UNIQUE"
-GET_DATA_QUERY = "MATCH (n:Resource) RETURN n.uri as uri, labels(n) as labels, properties(n) as props ORDER BY uri"
-LOCAL = (os.getenv("RUN_TEST_LOCALLY", "False").lower() == "true")
-
-load_dotenv()
 
 
 def test_shorten_all_prefixes_defined(neo4j_container, neo4j_driver):
@@ -93,10 +84,49 @@ def test_shorten_missing_prefix(neo4j_container, neo4j_driver):
     graph_store = Graph(store=Neo4jStore(config=config))
 
     try:
-        graph_store.parse('../test_files/n10s_example.ttl')
+        graph_store.parse(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../test_files/n10s_example.ttl"))
     except Exception as e:
         assert isinstance(e, ShortenStrictException)
     assert True
 
 
-# TODO: add test for each strategy in HANDLE_VOCAB_URI_STRATEGY
+def test_keep_strategy(neo4j_container, neo4j_driver):
+    auth_data = get_credentials(LOCAL, neo4j_container)
+
+    config = Neo4jStoreConfig(auth_data=auth_data,
+                              handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.KEEP,
+                              batching=False)
+
+    graph_store = Graph(store=Neo4jStore(config=config))
+    n10s_params = {"handleVocabUris": "KEEP"}
+
+    records_from_rdf_lib, records, rels_from_rdflib, rels = read_file_n10s_and_rdflib(neo4j_driver, graph_store,
+                                                                                      n10s_params=n10s_params,
+                                                                                      get_rels=True)
+    assert len(records_from_rdf_lib) == len(records)
+    for i in range(len(records)):
+        assert records_equal(records[i], records_from_rdf_lib[i])
+    assert len(rels_from_rdflib) == len(rels)
+    for i in range(len(rels)):
+        assert records_equal(rels[i], rels_from_rdflib[i], rels=True)
+
+
+def test_ignore_strategy(neo4j_container, neo4j_driver):
+    auth_data = get_credentials(LOCAL, neo4j_container)
+
+    config = Neo4jStoreConfig(auth_data=auth_data,
+                              handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+                              batching=False)
+
+    graph_store = Graph(store=Neo4jStore(config=config))
+    n10s_params = {"handleVocabUris": "IGNORE"}
+
+    records_from_rdf_lib, records, rels_from_rdflib, rels = read_file_n10s_and_rdflib(neo4j_driver, graph_store,
+                                                                                      n10s_params=n10s_params,
+                                                                                      get_rels=True)
+    assert len(records_from_rdf_lib) == len(records)
+    for i in range(len(records)):
+        assert records_equal(records[i], records_from_rdf_lib[i])
+    assert len(rels_from_rdflib) == len(rels)
+    for i in range(len(rels)):
+        assert records_equal(rels[i], rels_from_rdflib[i], rels=True)

@@ -3,8 +3,8 @@ from decimal import Decimal
 from typing import Dict, Set, List
 from rdflib import Literal, URIRef, RDF
 from rdflib.term import Node
-
-from rdflib_neo4j.utils import handle_vocab_uri, HANDLE_MULTIVAL_STRATEGY, HANDLE_VOCAB_URI_STRATEGY
+from rdflib_neo4j.utils import handle_vocab_uri
+from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
 
 
 class Neo4jTriple:
@@ -52,13 +52,14 @@ class Neo4jTriple:
         """
         self.labels.add(label)
 
-    def add_prop(self, prop_name: str, value: Literal, multi=False):
+    def add_prop(self, prop_name: str, value: Literal, multi:bool=False):
         """
         Adds a property to the `props` dictionary of the Neo4jTriple object.
 
         Args:
             prop_name (str): The name of the property.
             value (Literal): The value of the property.
+            multi: If the property should be treated as multivalued. Default: False
         """
         if multi:
             self.multi_props[prop_name].append(value)

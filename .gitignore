@@ -131,3 +131,5 @@ dmypy.json
 /test_data/
 /untitled/
 /.idea/
+/technip_import.py
+.DS_Store

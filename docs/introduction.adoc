@@ -1,0 +1,16 @@
+= Documentation Title
+:doctype: book
+:icons: font
+:source-highlighter: coderay
+:toc: left
+:toclevels: 2
+
+toc::[]
+
+= Chapter 1: Introduction
+
+== Section 1.1: Purpose
+This section provides an overview of the purpose of this documentation.
+
+
+

@@ -4,15 +4,10 @@ from testcontainers.neo4j import Neo4jContainer
 
 from rdflib_neo4j.Neo4jStore import Neo4jStore
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
-from rdflib_neo4j.utils import HANDLE_VOCAB_URI_STRATEGY
+from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY
 import os
-from dotenv import load_dotenv
 
-RDFLIB_DB = "rdflib"
-N10S_CONSTRAINT_QUERY = "CREATE CONSTRAINT n10s_unique_uri IF NOT EXISTS FOR (r:Resource) REQUIRE r.uri IS UNIQUE"
-GET_NODES_PROPS_QUERY = "MATCH (n:Resource) RETURN n.uri as uri, labels(n) as labels, properties(n) as props ORDER BY uri"
-GET_RELS_QUERY = "MATCH (n:Resource)-[r]->(n2:Resource) RETURN  n.uri as nuri, n2.uri as n2uri,type(r) as type ORDER by nuri,n2uri"
-load_dotenv()
+from test.integration.constants import RDFLIB_DB, GET_NODES_PROPS_QUERY, GET_RELS_QUERY
 
 
 def records_equal(record1: Record, record2: Record, rels=False):
@@ -72,8 +67,8 @@ def read_file_n10s_and_rdflib(neo4j_driver, graph_store, batching=False, n10s_pa
     records_from_rdf_lib, summary, keys = neo4j_driver.execute_query(GET_NODES_PROPS_QUERY, database_=RDFLIB_DB)
     n10s_rels, rdflib_rels = None, None
     if get_rels:
-        n10s_rels,summary, keys = neo4j_driver.execute_query(GET_RELS_QUERY)
-        rdflib_rels,summary, keys = neo4j_driver.execute_query(GET_RELS_QUERY, database_=RDFLIB_DB)
+        n10s_rels, summary, keys = neo4j_driver.execute_query(GET_RELS_QUERY)
+        rdflib_rels, summary, keys = neo4j_driver.execute_query(GET_RELS_QUERY, database_=RDFLIB_DB)
     return records_from_rdf_lib, records, rdflib_rels, n10s_rels
 
 
@@ -113,6 +108,7 @@ def config_graph_store(auth_data, batching=False):
 
     g = Graph(store=Neo4jStore(config=config))
     return g
+
 
 def get_credentials(local, neo4j_container):
     if local:

@@ -1,6 +1,6 @@
 from typing import Set, List, Dict
 
-from rdflib_neo4j.utils import HANDLE_MULTIVAL_STRATEGY
+from rdflib_neo4j.config.const import HANDLE_MULTIVAL_STRATEGY
 
 
 def prop_query_append(prop):
@@ -36,6 +36,7 @@ class NodeQueryComposer:
 
         Args:
             props: The properties to add.
+            multi: If the property should be treated as multivalued. Default: False
         """
         if not multi:
             self.props.update(props)

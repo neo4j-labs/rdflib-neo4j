@@ -2,8 +2,7 @@ from functools import wraps
 from time import time
 from typing import Dict
 from rdflib import URIRef
-from enum import Enum
-from rdflib_neo4j.config.const import ShortenStrictException
+from rdflib_neo4j.config.const import ShortenStrictException, HANDLE_VOCAB_URI_STRATEGY
 
 
 def timing(f):
@@ -70,36 +69,6 @@ def getNamespacePart(uri):
     if pos < 0:
         pos = uri.rindex(':')
     return uri[0:pos + 1]
-
-
-class HANDLE_VOCAB_URI_STRATEGY(Enum):
-    """
-    Enum class defining different strategies for handling vocabulary URIs.
-
-    - SHORTEN : Strategy to shorten the URIs (Every prefix that you will use must be defined in the config, otherwise Neo4jStore will throw a ShortenStrictException)
-    - MAP : Strategy to map the URIs using provided mappings
-    - KEEP : Strategy to keep the URIs
-    - IGNORE : Strategy to ignore the Namespace and get only the local part
-
-    """
-    SHORTEN = "SHORTEN"  # Strategy to shorten the URIs
-    MAP = "MAP"  # Strategy to map the URIs using provided mappings
-    KEEP = "KEEP"  # Strategy to keep the URIs
-    IGNORE = "IGNORE"  # Strategy to ignore the Namespace and get only the local part
-
-
-class HANDLE_MULTIVAL_STRATEGY(Enum):
-    """
-    Enum class defining different strategies for handling multiple values.
-
-    - OVERWRITE:  Strategy to overwrite multiple values
-    - ARRAY:  Strategy to treat multiple values as an array
-
-    TO NOTICE : If the strategy is ARRAY and the Neo4jStoreConfig doesn't contain any predicate marked as multivalued, EVERY field will be treated as multivalued.
-    """
-    OVERWRITE = 1  # Strategy to overwrite multiple values
-    ARRAY = 2  # Strategy to treat multiple values as an array
-
 
 def handle_vocab_uri_ignore(predicate):
     """
@@ -194,5 +163,3 @@ def handle_vocab_uri(mappings: Dict[str, str],
     elif strategy == HANDLE_VOCAB_URI_STRATEGY.IGNORE:
         return handle_vocab_uri_ignore(predicate)
     raise Exception(f"Strategy {strategy} not defined.")
-
-

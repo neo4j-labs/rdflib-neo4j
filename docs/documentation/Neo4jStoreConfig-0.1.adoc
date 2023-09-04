@@ -1,0 +1,242 @@
+== Neo4j Store Config
+[.procedures, opts=header]
+
+This object is used to configure the Neo4j Store to connect to your Neo4j Instance and to manage the parsing of a Triple Store.
+
+=== Object Initialization
+|===
+| Name | Type | Required | Default | Description
+| auth_data | Dictionary | True | None | A dictionary containing authentication data. The required keys are ["uri", "database", "user", "pwd"].
+| batching | Boolean | False | True | A boolean indicating whether batching is enabled.
+| batch_size | Integer | False | 5000 | An integer representing the batch size (The batch size is intended as number of entities to store inside the database (nodes/relationships) and not triples.
+| custom_mappings | List[Tuple[Str,Str,Str]] | False | Empty list | A list of tuples containing custom mappings for prefixes in the form (prefix, object_to_replace, new_object).
+| custom_prefixes | Dictionary | True if handle_vocab_uri_strategy ==  HANDLE_VOCAB_URI_STRATEGY.SHORTEN | {} (empty dictionary) | A dictionary containing custom prefixes.
+| handle_vocab_uri_strategy | HANDLE_VOCAB_URI_STRATEGY | False | HANDLE_VOCAB_URI_STRATEGY.SHORTEN | The strategy to handle vocabulary URIs.
+| handle_multival_strategy | HANDLE_MULTIVAL_STRATEGY | False | HANDLE_MULTIVAL_STRATEGY.OVERWRITE | The strategy to handle multivalued properties.
+| multival_props_names | List[Tuple[Str,Str]] | False | [] (empty list) | A list of tuples containing the prefix and property names to be treated as multivalued in the form (prefix, property_name).
+|===
+
+== Functions
+
+=== set_handle_vocab_uri_strategy
+
+Set the strategy to handle vocabulary URIs.
+
+==== Arguments
+
+|===
+| Name | Type | Description
+| val | HANDLE_VOCAB_URI_STRATEGY | The handle_vocab_uri_strategy value to be set.
+|===
+
+==== Output
+No specific output.
+
+=== set_handle_multival_strategy
+
+Set the strategy to handle multiple values.
+
+==== Arguments
+
+|===
+| Name | Type | Description
+| val | HANDLE_MULTIVAL_STRATEGY | The handle_multival_strategy value to be set.
+|===
+
+
+=== set_default_prefix
+
+Set a default prefix.
+
+==== Arguments
+
+|===
+| Name | Type | Description
+| name | str | The name of the prefix.
+| value | str | The value of the prefix (namespace URI).
+|===
+
+
+=== get_prefixes
+
+Get a dictionary containing all prefixes (default and custom).
+
+==== Arguments
+No arguments
+
+==== Output
+
+|===
+| Type | Description
+| Dictionary | A dictionary containing all prefixes.
+|===
+
+=== set_multival_prop_name
+
+Set a property name to be treated as multivalued.
+
+==== Arguments
+
+|===
+| Name | Type | Description
+| prefix_name | str | The name of the prefix.
+| prop_name | str | The name of the property to be treated as multivalued.
+|===
+
+=== set_custom_prefix
+
+Add a custom prefix to the configuration.
+
+==== Arguments
+
+|===
+| Name | Type | Description
+| name | str | The name of the prefix.
+| value | str | The value of the prefix (namespace URI).
+|===
+
+=== delete_custom_prefix
+
+Delete a custom prefix from the 'custom_prefixes' dictionary.
+
+==== Arguments
+
+|===
+| Name | Type | Description
+| name | str | The name of the custom prefix to be deleted.
+|===
+
+=== set_custom_mapping
+
+Add a custom mapping for a certain prefix.
+
+==== Arguments
+
+|===
+| Name | Type | Description
+| prefix_name | str | The name of the prefix to be mapped.
+| to_replace | str | The value to be replaced in the namespace URI.
+| new_value | str | The new value for the mapping (namespace URI).
+|===
+
+=== delete_custom_mapping
+
+Deletes a custom mapping from the custom_mappings dictionary. It will raise PrefixNotFoundException if the prefix is not found in the available prefixes.
+
+==== Arguments
+
+|===
+| Name | Type | Description
+| prefix_name | str | The name of the prefix to which 'to_replace' is associated.
+| to_replace | str | The value to be replaced within the prefix's namespace.
+|===
+
+=== set_auth_data
+
+Set authentication data.
+
+==== Arguments
+
+|===
+| Name | Type | Description
+| auth | Dictionary | A dictionary containing authentication data. The required keys are ["uri", "database", "user", "pwd"].
+|===
+
+=== set_batching
+
+Set batching.
+
+==== Arguments
+
+|===
+| Name | Type | Description
+| val | bool | A boolean indicating whether batching is enabled.
+|===
+
+=== set_batch_size
+
+Set the batch size.
+
+==== Arguments
+
+|===
+| Name | Type | Description
+| val | int | An integer representing the batch size.
+|===
+
+=== get_config_dict
+
+Get the configuration dictionary. Raises WrongAuthenticationException if any of the required authentication fields is missing.
+
+==== Arguments
+No arguments.
+
+==== Output
+
+|===
+| Type | Description
+| Dictionary | A dictionary containing the configuration parameters.
+|===
+
+== Enumerators
+
+=== HANDLE_VOCAB_URI_STRATEGY
+
+Enum class defining different strategies for handling vocabulary URIs.
+
+==== Possible Values
+
+|===
+| Name | Description
+| SHORTEN | Strategy to shorten the URIs (Every prefix that you will use must be defined in the config, otherwise Neo4jStore will throw a ShortenStrictException)
+| MAP | Strategy to map the URIs using provided mappings
+| KEEP | Strategy to keep the URIs
+| IGNORE | Strategy to ignore the Namespace and get only the local part
+|===
+
+=== Examples
+
+Here a series of examples of the application of a strategy on a certain triplet.
+
+#TODO: Fill the examples#
+
+=== Shorten
+
+This strategy will shorten the URIs, replacing the prefix with its shorted version. If the Store find a prefix not defined inside its Neo4jStoreConfig object, the parsing will stop, raising a ShortenStrictException error.
+
+=== Map
+
+
+=== Keep
+
+This strategy will keep the predicate as it is by preserving its prefix
+
+=== Ignore
+
+This strategy will remove the entire prefix from the predicate.
+
+=== HANDLE_MULTIVAL_STRATEGY
+
+Enum class defining different strategies for handling multiple values.
+
+TO NOTICE: If the strategy is ARRAY and the Neo4jStoreConfig doesn't contain any predicate marked as multivalued, EVERY field will be treated as multivalued.
+
+==== Possible Values
+
+|===
+| Name | Description
+| OVERWRITE | Strategy to overwrite multiple values
+| ARRAY | Strategy to treat multiple values as an array
+|===
+
+=== Examples
+
+Here a series of examples of the application of a strategy on a certain triplet.
+
+=== Overwrite
+
+This strategy will overwrite the current value of a node.
+
+=== Map
+
+This strategy will concat all the values encountered during the ingestion for the same subject inside an array.
