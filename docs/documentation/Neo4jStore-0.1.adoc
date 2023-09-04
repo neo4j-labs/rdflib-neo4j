@@ -1,7 +1,7 @@
 == Neo4j Store Config
 [.procedures, opts=header]
 
-This class is an implementation of the rdflib link:https://rdflib.readthedocs.io/en/stable/_modules/rdflib/store.html[Store class] that uses Neo4j as a backend. In this way is possible to persist you RDF data directly in Neo4j, with the power of rdflib to process your data.
+This class is an implementation of the rdflib link:https://rdflib.readthedocs.io/en/stable/_modules/rdflib/store.html[Store class] that uses Neo4j as a backend. In this way it is possible to persist you RDF data directly in Neo4j, with the power of rdflib to process your data.
 
 === Object Initialization
 |===
@@ -19,7 +19,7 @@ Opens a connection to the Neo4j database.
 
 |===
 | Name | Type | Description
-| configuration | | The configuration for the Neo4j database. (Not used, just kept for the method declaration in the Store class)
+| configuration |N/A| The configuration for the Neo4j database. (Not used, just kept for the method declaration in the Store class)
 | create | bool | Flag indicating whether to create the uniqueness constraint if not found.
 |===
 
