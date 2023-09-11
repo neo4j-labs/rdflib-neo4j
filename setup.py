@@ -33,13 +33,12 @@ if __name__ == "__main__":
         platforms="All",
         url="https://github.com/neo4j-labs/rdflib-neo4j",
         install_requires=[
-            'rdflib >= 5.0.0','neo4j >= 4.1.0',
+            'rdflib >= 7.0.0', 'neo4j >= 5.0.0',
         ],
         packages=['rdflib_neo4j'],
         entry_points={
             'rdf.plugins.store': [
-                'neo4j-n10s = rdflib_neo4j.neo4j:N10sNeo4jStore',
-                'neo4j-cypher = rdflib_neo4j.neo4jcypher:CypherNeo4jStore',
+                'neo4j-cypher = rdflib_neo4j.neo4jcypher:Neo4jStore',
             ],
         },
         zip_safe=False
