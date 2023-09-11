@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.x"]
+        python-version: ["3.11"]
 
     steps:
     - uses: actions/checkout@v3
@@ -31,5 +31,3 @@ jobs:
     - name: Test with pytest
       run: |
         pytest
-    - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v3
