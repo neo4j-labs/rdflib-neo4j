@@ -1,0 +1,6 @@
+setuptools==68.1.2
+rdflib==7.0.0
+neo4j==5.11.0
+testcontainers~=3.7.1
+pytest~=7.4.0
+python-dotenv~=1.0.0
