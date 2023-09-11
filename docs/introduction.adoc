@@ -1,4 +1,4 @@
-= Documentation Title
+= RDFLIB + Neo4j User Guide
 :doctype: book
 :icons: font
 :source-highlighter: coderay

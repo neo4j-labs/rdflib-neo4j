@@ -73,7 +73,7 @@ for band in g.subjects(rdflib.RDF.type, rdflib.URIRef("neo4j://graph.schema#Band
     for bandName in g.objects(band, rdflib.URIRef("neo4j://graph.schema#name")):
         print(bandName)
 ```
-This fragment retunrs a listing with the names of the bands in the dataset and at the same time, has populated your Neo4j DB with a graph like this one:
+This fragment returns a listing with the names of the bands in the dataset and at the same time, has populated your Neo4j DB with a graph like this one:
 
 <img src="https://raw.githubusercontent.com/neo4j-labs/rdflib-neo4j/master/img/graph-view.png" height="400">
 

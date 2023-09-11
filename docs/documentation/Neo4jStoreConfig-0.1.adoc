@@ -5,15 +5,27 @@ This object is used to configure the Neo4j Store to connect to your Neo4j Instan
 
 === Object Initialization
 |===
-| Name | Type | Required | Default | Description
-| auth_data | Dictionary | True | None | A dictionary containing authentication data. The required keys are ["uri", "database", "user", "pwd"].
-| batching | Boolean | False | True | A boolean indicating whether batching is enabled.
-| batch_size | Integer | False | 5000 | An integer representing the batch size (The batch size is intended as number of entities to store inside the database (nodes/relationships) and not triples.
+| Name | Type | Required | Values(Default) | Description
+| auth_data | Dictionary | True | ("uri", "database", "user", "pwd") | A dictionary containing authentication data. The required keys are: ["uri", "database", "user", "pwd"].
+| batching | Boolean | False | boolean (True) | A boolean indicating whether batching is enabled.
+| batch_size | Integer | False | (5000) | An integer representing the batch size (The batch size is intended as number of entities to store inside the database (nodes/relationships) and not triples.
 | custom_mappings | List[Tuple[Str,Str,Str]] | False | Empty list | A list of tuples containing custom mappings for prefixes in the form (prefix, object_to_replace, new_object).
-| custom_prefixes | Dictionary | True if handle_vocab_uri_strategy ==  HANDLE_VOCAB_URI_STRATEGY.SHORTEN | {} (empty dictionary) | A dictionary containing custom prefixes.
-| handle_vocab_uri_strategy | HANDLE_VOCAB_URI_STRATEGY | False | HANDLE_VOCAB_URI_STRATEGY.SHORTEN | The strategy to handle vocabulary URIs.
-| handle_multival_strategy | HANDLE_MULTIVAL_STRATEGY | False | HANDLE_MULTIVAL_STRATEGY.OVERWRITE | The strategy to handle multivalued properties.
-| multival_props_names | List[Tuple[Str,Str]] | False | [] (empty list) | A list of tuples containing the prefix and property names to be treated as multivalued in the form (prefix, property_name).
+| custom_prefixes | Dictionary | True if handle_vocab_uri_strategy ==  HANDLE_VOCAB_URI_STRATEGY.SHORTEN | ({}) | A dictionary containing custom prefixes.
+| handle_vocab_uri_strategy | HANDLE_VOCAB_URI_STRATEGY | False |HANDLE_VOCAB_URI_STRATEGY.IGNORE, HANDLE_VOCAB_URI_STRATEGY.KEEP, HANDLE_VOCAB_URI_STRATEGY.MAP(HANDLE_VOCAB_URI_STRATEGY.SHORTEN) |
+
+* 'SHORTEN',  full uris are shortened using prefixes for property names, relationship names and labels. Fails if a prefix is not predefined for a namespace in the imported RDF.
+
+* 'IGNORE' uris are ignored and only local names are kept
+
+* 'MAP' vocabulary element mappings are applied on import
+
+* 'KEEP' uris are kept unchanged
+
+| handle_multival_strategy | HANDLE_MULTIVAL_STRATEGY | False | HANDLE_MULTIVAL_STRATEGY.ARRAY (HANDLE_MULTIVAL_STRATEGY.OVERWRITE)|
+* 'OVERWRITE' property values are kept single valued. Multiple values in the imported RDF are overwriten (only the last one is kept)
+
+* 'ARRAY' properties are stored in an array enabling storage of multiple values. All of them unless multivalPropList is set.
+| multival_props_names | List[Tuple[Str,Str]] | False | ([]) | A list of tuples containing the prefix and property names to be treated as multivalued in the form (prefix, property_name).
 |===
 
 == Functions
@@ -29,8 +41,7 @@ Set the strategy to handle vocabulary URIs.
 | val | HANDLE_VOCAB_URI_STRATEGY | The handle_vocab_uri_strategy value to be set.
 |===
 
-==== Output
-No specific output.
+
 
 === set_handle_multival_strategy
 
@@ -54,21 +65,6 @@ Set a default prefix.
 | Name | Type | Description
 | name | str | The name of the prefix.
 | value | str | The value of the prefix (namespace URI).
-|===
-
-
-=== get_prefixes
-
-Get a dictionary containing all prefixes (default and custom).
-
-==== Arguments
-No arguments
-
-==== Output
-
-|===
-| Type | Description
-| Dictionary | A dictionary containing all prefixes.
 |===
 
 === set_multival_prop_name
@@ -178,6 +174,20 @@ No arguments.
 | Dictionary | A dictionary containing the configuration parameters.
 |===
 
+=== get_prefixes
+
+Get a dictionary containing all prefixes (default and custom).
+
+==== Arguments
+No arguments
+
+==== Output
+
+|===
+| Type | Description
+| Dictionary | A dictionary containing all prefixes.
+|===
+
 == Enumerators
 
 === HANDLE_VOCAB_URI_STRATEGY
@@ -205,7 +215,7 @@ Here a series of examples of the application of a strategy on a certain triplet.
 This strategy will shorten the URIs, replacing the prefix with its shorted version. If the Store find a prefix not defined inside its Neo4jStoreConfig object, the parsing will stop, raising a ShortenStrictException error.
 
 === Map
-
+vocabulary element mappings are applied on import.
 
 === Keep
 
