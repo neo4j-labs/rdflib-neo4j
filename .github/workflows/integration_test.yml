@@ -4,8 +4,6 @@
 name: Integration tests
 
 on:
-  push:
-    branches: [ "master", "develop" ]
   pull_request:
     branches: [ "master","develop" ]
 
@@ -13,9 +11,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
-        python-version: ["3.x"]
+        python-version: ["3.11"]
 
     steps:
     - uses: actions/checkout@v3
@@ -27,9 +25,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e '.[dev]'
+        pip install -r requirements.txt
     - name: Test with pytest
       run: |
         pytest
-    - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v3
