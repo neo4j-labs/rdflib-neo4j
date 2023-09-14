@@ -23,9 +23,9 @@ if sys.version_info[:2] < (3, 6):
 if __name__ == "__main__":
     setup(
         name="rdflib-neo4j",
-        version="0.0.1b4",
+        version="0.1",
         author="Jesús Barrasa",
-        author_email="jbarrasa@outlook.com",
+        author_email="jbarrasa@outlook.com,",
         description="RDFLib Store backed by neo4j",
         keywords="neo4j, rdflib, neosemantics, n10s",
         long_description="RDFLib Store backed by neo4j",
