@@ -11,8 +11,6 @@ from rdflib_neo4j.config.const import NEO4J_DRIVER_USER_AGENT_NAME
 from rdflib_neo4j.query_composers.NodeQueryComposer import NodeQueryComposer
 from rdflib_neo4j.query_composers.RelationshipQueryComposer import RelationshipQueryComposer
 
-__all__ = ["Neo4jStore"]
-
 
 class Neo4jStore(Store):
 
