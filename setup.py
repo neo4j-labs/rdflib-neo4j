@@ -35,7 +35,7 @@ if __name__ == "__main__":
         install_requires=[
             'rdflib >= 7.0.0', 'neo4j >= 5.0.0',
         ],
-        packages=['rdflib_neo4j'],
+        packages=["rdflib_neo4j", "rdflib_neo4j.config", "rdflib_neo4j.query_composers"],
         entry_points={
             'rdf.plugins.store': [
                 'neo4j-cypher = rdflib_neo4j.neo4jcypher:Neo4jStore',
