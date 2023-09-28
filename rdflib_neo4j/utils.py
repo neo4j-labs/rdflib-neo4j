@@ -2,7 +2,7 @@ from functools import wraps
 from time import time
 from typing import Dict
 from rdflib import URIRef
-from rdflib_neo4j.config.const import ShortenStrictException, HANDLE_VOCAB_URI_STRATEGY
+from rdflib_neo4j.config.const import ShortenStrictException, HANDLE_VOCAB_URI_STRATEGY, NEO4J_DRIVER_DICT_MESSAGE
 
 
 def timing(f):
@@ -163,3 +163,17 @@ def handle_vocab_uri(mappings: Dict[str, str],
     elif strategy == HANDLE_VOCAB_URI_STRATEGY.IGNORE:
         return handle_vocab_uri_ignore(predicate)
     raise Exception(f"Strategy {strategy} not defined.")
+
+
+def handle_neo4j_driver_exception(ex: Exception):
+    """
+    Handle exceptions raised by the Neo4j driver by providing custom error messages.
+
+    Args:
+        ex (Exception): The exception raised by the Neo4j driver.
+
+    Returns:
+        Exception: A custom exception or the original exception.
+    """
+    res = NEO4J_DRIVER_DICT_MESSAGE.get(str(ex))
+    return ex if not res else res()
