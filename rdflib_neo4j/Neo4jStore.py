@@ -10,6 +10,7 @@ from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
 from rdflib_neo4j.config.const import NEO4J_DRIVER_USER_AGENT_NAME
 from rdflib_neo4j.query_composers.NodeQueryComposer import NodeQueryComposer
 from rdflib_neo4j.query_composers.RelationshipQueryComposer import RelationshipQueryComposer
+from rdflib_neo4j.utils import handle_neo4j_driver_exception
 
 
 class Neo4jStore(Store):
@@ -309,6 +310,6 @@ class Neo4jStore(Store):
         try:
             self.session.run(query, params=params)
         except Exception as e:
-            print(e)
+            e = handle_neo4j_driver_exception(e)
             logging.error(e)
             raise e

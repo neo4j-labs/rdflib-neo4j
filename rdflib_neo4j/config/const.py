@@ -17,7 +17,6 @@ DEFAULT_PREFIXES = {
 NEO4J_AUTH_REQUIRED_FIELDS = ["uri", "database", "user", "pwd"]
 NEO4J_DRIVER_USER_AGENT_NAME = "neo4j_labs_n10s_client_lib"
 
-
 class PrefixNotFoundException(Exception):
 
     # Constructor or Initializer
@@ -51,6 +50,17 @@ class WrongAuthenticationException(Exception):
         return f"""Missing {self.param_name} key inside the authentication definition. Remember that it should contain the following keys:
                 : [uri, database, user, pwd]"""
 
+class CypherMultipleTypesMultiValueException(Exception):
+
+    # Constructor or Initializer
+    def __init__(self):
+        super().__init__()
+
+    def __str__(self):
+        return f"""Values of a multivalued property must have the same datatype."""
+
+NEO4J_DRIVER_MULTIPLE_TYPE_ERROR_MESSAGE = """{code: Neo.ClientError.Statement.TypeError} {message: Neo4j only supports a subset of Cypher types for storage as singleton or array properties. Please refer to section cypher/syntax/values of the manual for more details.}"""
+NEO4J_DRIVER_DICT_MESSAGE = {NEO4J_DRIVER_MULTIPLE_TYPE_ERROR_MESSAGE: CypherMultipleTypesMultiValueException}
 
 class HANDLE_VOCAB_URI_STRATEGY(Enum):
     """
