@@ -4,7 +4,8 @@ from rdflib_neo4j.config.const import HANDLE_MULTIVAL_STRATEGY
 
 
 def prop_query_append(prop):
-    return f"""n.`{prop}` = CASE WHEN COALESCE(param["{prop}"], NULL) IS NULL THEN n.{prop} ELSE COALESCE(n.`{prop}`,[]) + param["{prop}"] END"""
+    return  f"""n.`{prop}` = CASE WHEN COALESCE(param["{prop}"], NULL) IS NULL THEN n.{prop} ELSE REDUCE(i=COALESCE(n.{prop},[]), val IN param["{prop}"] | CASE WHEN val IN i THEN i ELSE i+val END) END """
+
 
 
 def prop_query_single(prop):
