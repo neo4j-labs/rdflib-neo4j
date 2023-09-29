@@ -79,13 +79,18 @@ class Neo4jStore(Store):
         self.total_triples += 1
 
         # If batching, we push whenever the buffers are filled with enough data
-        if self.batching:
-            if self.node_buffer_size >= self.buffer_max_size:
-                self.commit(commit_nodes=True)
-            if self.rel_buffer_size >= self.buffer_max_size:
-                self.commit(commit_rels=True)
-        else:
-            self.commit()
+        try:
+            if self.batching:
+                if self.node_buffer_size >= self.buffer_max_size:
+                    self.commit(commit_nodes=True)
+                if self.rel_buffer_size >= self.buffer_max_size:
+                    self.commit(commit_rels=True)
+            else:
+                self.commit()
+        except Exception as e:
+            print(f"Flushing all query params due to error: {e}")
+            self.__close_on_error()
+            raise e
 
     def commit(self, commit_nodes=False, commit_rels=False):
         """
@@ -121,6 +126,17 @@ class Neo4jStore(Store):
         self.__set_open(False)
         print(f"IMPORTED {self.total_triples} TRIPLES")
         print(f"TOTAL FLUSHED: NODES: {self.statistics['node_count']} RELATIONSHIPS: {self.statistics['rel_count']}")
+
+    def __close_on_error(self):
+        """
+        Empties the query buffers in case of an error.
+
+        This method empties the query parameters in the node and relationship buffers.
+        """
+        for node_buffer in self.node_buffer.values():
+            node_buffer.empty_query_params()
+        for rel_buffer in self.rel_buffer.values():
+            rel_buffer.empty_query_params()
 
     def __set_open(self, val: bool):
         """
