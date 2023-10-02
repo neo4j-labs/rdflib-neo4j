@@ -80,7 +80,7 @@ class NodeQueryComposer:
             if self.multival_props_predicates:
                 # If there are properties treated as multivalued, use SET query for each property
                 # and SET query for each property to append to the array
-                q = f'''SET {', '.join([prop_query_single(prop) for prop in self.props])}'''
+                q = f'''SET {', '.join([prop_query_single(prop) for prop in self.props])}''' if self.props else ''
                 if self.multi_props:
                     q += f''' SET {', '.join([prop_query_append(prop) for prop in self.multi_props])}'''
             else:
