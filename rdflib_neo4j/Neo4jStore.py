@@ -32,7 +32,6 @@ class Neo4jStore(Store):
         self.rel_buffer: Dict[str, RelationshipQueryComposer] = {}
         self.current_subject: Neo4jTriple = None
         self.mappings = config.custom_mappings
-        self.statistics = {"node_count": 0, "rel_count": 0}
         self.handle_vocab_uri_strategy = config.handle_vocab_uri_strategy
         self.handle_multival_strategy = config.handle_multival_strategy
         self.multival_props_predicates = config.multival_props_names
@@ -125,7 +124,6 @@ class Neo4jStore(Store):
         self.driver.close()
         self.__set_open(False)
         print(f"IMPORTED {self.total_triples} TRIPLES")
-        print(f"TOTAL FLUSHED: NODES: {self.statistics['node_count']} RELATIONSHIPS: {self.statistics['rel_count']}")
 
     def __close_on_error(self):
         """
@@ -297,7 +295,6 @@ class Neo4jStore(Store):
                 query = cur.write_query()
                 params = cur.query_params
                 self.__query_database(query=query, params=params)
-                self.statistics["node_count"] += len(cur.query_params)
                 cur.empty_query_params()
         self.node_buffer_size = 0
 
@@ -311,7 +308,6 @@ class Neo4jStore(Store):
                 query = cur.write_query()
                 params = cur.query_params
                 self.__query_database(query=query, params=params)
-                self.statistics["rel_count"] += len(cur.query_params)
                 cur.empty_query_params()
         self.rel_buffer_size = 0
 
