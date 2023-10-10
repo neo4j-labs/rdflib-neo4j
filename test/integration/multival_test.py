@@ -136,5 +136,3 @@ def test_read_file_multival_array_as_set_behavior(neo4j_container, neo4j_driver)
                                                             database_=RDFLIB_DB)
 
         assert len(records) == 0
-
-    x = 1
