@@ -1,4 +1,0 @@
-pip install --upgrade build
-python -m build
-python -m venv .venv
-pip install --editable .
