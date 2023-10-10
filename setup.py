@@ -23,9 +23,9 @@ if sys.version_info[:2] < (3, 6):
 if __name__ == "__main__":
     setup(
         name="rdflib-neo4j",
-        version="0.1",
-        author="Jesús Barrasa",
-        author_email="jbarrasa@outlook.com,",
+        version="1.0",
+        author="Jesús Barrasa, Aleksandar Simeunovic, Alfredo Rubin",
+        author_email="jbarrasa@outlook.com, aleksandar.simeunovic@neo4j.com, alfredo.rubin@neo4j.com",
         description="RDFLib Store backed by neo4j",
         keywords="neo4j, rdflib, neosemantics, n10s",
         long_description="RDFLib Store backed by neo4j",
@@ -35,7 +35,7 @@ if __name__ == "__main__":
         install_requires=[
             'rdflib >= 7.0.0', 'neo4j >= 5.0.0',
         ],
-        packages=['rdflib_neo4j'],
+        packages=["rdflib_neo4j", "rdflib_neo4j.config", "rdflib_neo4j.query_composers"],
         entry_points={
             'rdf.plugins.store': [
                 'neo4j-cypher = rdflib_neo4j.neo4jcypher:Neo4jStore',

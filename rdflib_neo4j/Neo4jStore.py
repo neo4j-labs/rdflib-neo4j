@@ -10,8 +10,7 @@ from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
 from rdflib_neo4j.config.const import NEO4J_DRIVER_USER_AGENT_NAME
 from rdflib_neo4j.query_composers.NodeQueryComposer import NodeQueryComposer
 from rdflib_neo4j.query_composers.RelationshipQueryComposer import RelationshipQueryComposer
-
-__all__ = ["Neo4jStore"]
+from rdflib_neo4j.utils import handle_neo4j_driver_exception
 
 
 class Neo4jStore(Store):
@@ -33,7 +32,6 @@ class Neo4jStore(Store):
         self.rel_buffer: Dict[str, RelationshipQueryComposer] = {}
         self.current_subject: Neo4jTriple = None
         self.mappings = config.custom_mappings
-        self.statistics = {"node_count": 0, "rel_count": 0}
         self.handle_vocab_uri_strategy = config.handle_vocab_uri_strategy
         self.handle_multival_strategy = config.handle_multival_strategy
         self.multival_props_predicates = config.multival_props_names
@@ -80,13 +78,18 @@ class Neo4jStore(Store):
         self.total_triples += 1
 
         # If batching, we push whenever the buffers are filled with enough data
-        if self.batching:
-            if self.node_buffer_size >= self.buffer_max_size:
-                self.commit(commit_nodes=True)
-            if self.rel_buffer_size >= self.buffer_max_size:
-                self.commit(commit_rels=True)
-        else:
-            self.commit()
+        try:
+            if self.batching:
+                if self.node_buffer_size >= self.buffer_max_size:
+                    self.commit(commit_nodes=True)
+                if self.rel_buffer_size >= self.buffer_max_size:
+                    self.commit(commit_rels=True)
+            else:
+                self.commit()
+        except Exception as e:
+            print(f"Flushing all query params due to error: {e}")
+            self.__close_on_error()
+            raise e
 
     def commit(self, commit_nodes=False, commit_rels=False):
         """
@@ -121,7 +124,17 @@ class Neo4jStore(Store):
         self.driver.close()
         self.__set_open(False)
         print(f"IMPORTED {self.total_triples} TRIPLES")
-        print(f"TOTAL FLUSHED: NODES: {self.statistics['node_count']} RELATIONSHIPS: {self.statistics['rel_count']}")
+
+    def __close_on_error(self):
+        """
+        Empties the query buffers in case of an error.
+
+        This method empties the query parameters in the node and relationship buffers.
+        """
+        for node_buffer in self.node_buffer.values():
+            node_buffer.empty_query_params()
+        for rel_buffer in self.rel_buffer.values():
+            rel_buffer.empty_query_params()
 
     def __set_open(self, val: bool):
         """
@@ -282,7 +295,6 @@ class Neo4jStore(Store):
                 query = cur.write_query()
                 params = cur.query_params
                 self.__query_database(query=query, params=params)
-                self.statistics["node_count"] += len(cur.query_params)
                 cur.empty_query_params()
         self.node_buffer_size = 0
 
@@ -296,7 +308,6 @@ class Neo4jStore(Store):
                 query = cur.write_query()
                 params = cur.query_params
                 self.__query_database(query=query, params=params)
-                self.statistics["rel_count"] += len(cur.query_params)
                 cur.empty_query_params()
         self.rel_buffer_size = 0
 
@@ -311,6 +322,6 @@ class Neo4jStore(Store):
         try:
             self.session.run(query, params=params)
         except Exception as e:
-            print(e)
+            e = handle_neo4j_driver_exception(e)
             logging.error(e)
             raise e

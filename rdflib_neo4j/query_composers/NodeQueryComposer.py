@@ -4,7 +4,8 @@ from rdflib_neo4j.config.const import HANDLE_MULTIVAL_STRATEGY
 
 
 def prop_query_append(prop):
-    return f"""n.`{prop}` = CASE WHEN COALESCE(param["{prop}"], NULL) IS NULL THEN n.{prop} ELSE COALESCE(n.`{prop}`,[]) + param["{prop}"] END"""
+    return  f"""n.`{prop}` = CASE WHEN COALESCE(param["{prop}"], NULL) IS NULL THEN n.{prop} ELSE REDUCE(i=COALESCE(n.{prop},[]), val IN param["{prop}"] | CASE WHEN val IN i THEN i ELSE i+val END) END """
+
 
 
 def prop_query_single(prop):
@@ -79,7 +80,7 @@ class NodeQueryComposer:
             if self.multival_props_predicates:
                 # If there are properties treated as multivalued, use SET query for each property
                 # and SET query for each property to append to the array
-                q = f'''SET {', '.join([prop_query_single(prop) for prop in self.props])}'''
+                q = f'''SET {', '.join([prop_query_single(prop) for prop in self.props])}''' if self.props else ''
                 if self.multi_props:
                     q += f''' SET {', '.join([prop_query_append(prop) for prop in self.multi_props])}'''
             else:
