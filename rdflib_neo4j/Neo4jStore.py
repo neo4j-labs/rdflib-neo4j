@@ -49,6 +49,22 @@ class Neo4jStore(Store):
         self.__constraint_check(create)
         self.__set_open(True)
 
+    def close(self, commit_pending_transaction=True):
+        """
+        Closes the store.
+
+        Args:
+            commit_pending_transaction (bool): Flag indicating whether to commit any pending transaction before closing.
+        """
+        if commit_pending_transaction:
+            self.commit(commit_nodes=True)
+            self.commit(commit_rels=True)
+        self.session.close()
+        self.driver.close()
+        self.__set_open(False)
+        print(f"IMPORTED {self.total_triples} TRIPLES")
+        self.total_triples=0
+
     def is_open(self):
         """
         Checks if the store is open.
@@ -108,23 +124,6 @@ class Neo4jStore(Store):
     def remove(self, triple, context=None, txn=None):
         raise NotImplemented("This is a streamer so it doesn't preserve the state, there is no removal feature.")
 
-    def close(self, commit_pending_transaction=True):
-        """
-        Closes the store.
-
-        Args:
-            commit_pending_transaction (bool): Flag indicating whether to commit any pending transaction before closing.
-        """
-        if commit_pending_transaction:
-            if self.node_buffer_size > 0:
-                self.commit(commit_nodes=True)
-            if self.rel_buffer_size > 0:
-                self.commit(commit_rels=True)
-        self.session.close()
-        self.driver.close()
-        self.__set_open(False)
-        print(f"IMPORTED {self.total_triples} TRIPLES")
-
     def __close_on_error(self):
         """
         Empties the query buffers in case of an error.
@@ -144,6 +143,8 @@ class Neo4jStore(Store):
             val (bool): The value to set for the 'open' status.
         """
         self.__open = val
+        print(f"The store is now: {'Open' if self.__open else 'Closed'}")
+
 
     def __create_session(self):
         """
