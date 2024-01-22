@@ -39,7 +39,7 @@ def records_equal(record1: Record, record2: Record, rels=False):
 
 
 def read_file_n10s_and_rdflib(neo4j_driver, graph_store, batching=False, n10s_params=None, n10s_mappings=None,
-                              get_rels=False, file_path="../test_files/n10s_example.ttl", n10s_file_format="Turtle", rdflib_file_format = "ttl"):
+                              get_rels=False, file_path="../test_files/n10s_example.ttl", n10s_file_format="'Turtle'", rdflib_file_format = "ttl"):
     """Compare data imported with n10s procs and n10s + rdflib"""
     if n10s_mappings is None:
         n10s_mappings = []
