@@ -149,7 +149,7 @@ def test_ignore_strategy_on_json_ld_file(neo4j_container, neo4j_driver):
                               custom_prefixes=prefixes,
                               custom_mappings=custom_mappings,
                               multival_props_names=multival_props_names,
-                              handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN,
+                              handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
                               batching=False)
 
     graph_store = Graph(store=Neo4jStore(config=config))
