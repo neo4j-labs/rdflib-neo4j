@@ -15,6 +15,8 @@ from rdflib_neo4j.utils import handle_neo4j_driver_exception
 
 class Neo4jStore(Store):
 
+    context_aware = True
+
     def __init__(self, config: Neo4jStoreConfig):
         self.__open = False
         self.driver = None

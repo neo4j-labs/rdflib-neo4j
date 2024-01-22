@@ -130,3 +130,32 @@ def test_ignore_strategy(neo4j_container, neo4j_driver):
     assert len(rels_from_rdflib) == len(rels)
     for i in range(len(rels)):
         assert records_equal(rels[i], rels_from_rdflib[i], rels=True)
+
+
+def test_ignore_strategy_on_json_ld_file(neo4j_container, neo4j_driver):
+    auth_data = get_credentials(LOCAL, neo4j_container)
+
+    # Define your prefixes
+    prefixes = {
+        'neo4ind': Namespace('http://neo4j.org/ind#'),
+    }
+
+    # Define your custom mappings
+    custom_mappings = []
+
+    multival_props_names = []
+
+    config = Neo4jStoreConfig(auth_data=auth_data,
+                              custom_prefixes=prefixes,
+                              custom_mappings=custom_mappings,
+                              multival_props_names=multival_props_names,
+                              handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN,
+                              batching=False)
+
+    graph_store = Graph(store=Neo4jStore(config=config))
+
+    try:
+        graph_store.parse(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../test_files/n10s_example.json"))
+    except Exception as e:
+        assert isinstance(e, ShortenStrictException)
+    assert True
