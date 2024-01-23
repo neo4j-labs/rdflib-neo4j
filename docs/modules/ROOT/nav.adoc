@@ -1,6 +1,1 @@
 * xref:index.adoc[Introduction]
-* xref:gettingstarted.adoc[Getting Started]
-* xref:neo4jstore.adoc[Neo4j Store]
-* xref:neo4jstoreconfig.adoc[Store Configuration]
-* xref:examples.adoc[Examples]
-* xref:contributing.adoc[Contributing]

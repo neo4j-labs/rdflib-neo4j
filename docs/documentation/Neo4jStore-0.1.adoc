@@ -1,9 +1,9 @@
-= Neo4j Store
+== Neo4j Store
 [.procedures, opts=header]
 
 This class is an implementation of the rdflib link:https://rdflib.readthedocs.io/en/stable/_modules/rdflib/store.html[Store class] that uses Neo4j as a backend. In this way it is possible to persist you RDF data directly in Neo4j, with the power of rdflib to process your data.
 
-== Constructor
+=== Object Initialization
 |===
 | Name | Type | Required | Default | Description
 |config|Neo4jStoreConfig|True||Neo4jStoreConfig object that contains all the useful informations to initialize the store.
