@@ -39,7 +39,7 @@ def records_equal(record1: Record, record2: Record, rels=False):
 
 
 def read_file_n10s_and_rdflib(neo4j_driver, graph_store, batching=False, n10s_params=None, n10s_mappings=None,
-                              get_rels=False):
+                              get_rels=False, file_path="../test_files/n10s_example.ttl", n10s_file_format="'Turtle'", rdflib_file_format = "ttl"):
     """Compare data imported with n10s procs and n10s + rdflib"""
     if n10s_mappings is None:
         n10s_mappings = []
@@ -47,19 +47,19 @@ def read_file_n10s_and_rdflib(neo4j_driver, graph_store, batching=False, n10s_pa
         n10s_params = {"handleVocabUris": "IGNORE"}
 
     g = Graph()
-    g.parse(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../test_files/n10s_example.ttl"))
-    rdf_payload = g.serialize(format='ttl')
+    g.parse(os.path.join(os.path.dirname(os.path.realpath(__file__)), file_path))
+    rdf_payload = g.serialize(format=rdflib_file_format)
 
     neo4j_driver.execute_query("CALL n10s.graphconfig.init($params)", params=n10s_params)
     for (prefix, mapping) in n10s_mappings:
         neo4j_driver.execute_query(prefix)
         neo4j_driver.execute_query(mapping)
 
-    records = neo4j_driver.execute_query("CALL n10s.rdf.import.inline($payload, 'Turtle')",
+    records = neo4j_driver.execute_query(f"CALL n10s.rdf.import.inline($payload, {n10s_file_format})",
                                          payload=rdf_payload)
     assert records[0][0]["terminationStatus"] == "OK"
 
-    graph_store.parse(data=rdf_payload, format="ttl")
+    graph_store.parse(data=rdf_payload, format=rdflib_file_format)
     # When batching we need to close the store to check that all the data is flushed
     if batching:
         graph_store.close(True)

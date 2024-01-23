@@ -1,0 +1,44 @@
+{
+   "@context":"http://schema.org/",
+   "@type":"Product",
+   "url":"https://www.edeka24.de/Wein-Spirituosen/Spirituosen/Vodka/Danzka-Premium-Vodka-Grapefruit-0-7L.html",
+   "gtin":"5700351851003",
+   "name":"Danzka Premium Vodka Grapefruit 0,7L",
+   "description":"EDEKA24 - Lebensmittel Onlineshop - Danzka - Danzka Premium Vodka Grapefruit 0,7L - online kaufen | Schnelle Lieferung mit DHL",
+   "image":[
+      {
+         "@type":"MediaObject",
+         "url":"https://www.edeka24.de/out/pictures/generated/product/1/540_540_90/danzka-vodka-grapafruit_1000.jpg",
+         "width":{
+            "@type":"QuantitativeValue",
+            "value":1000,
+            "unitCode":"E37"
+         },
+         "height":{
+            "@type":"QuantitativeValue",
+            "value":1000,
+            "unitCode":"E37"
+         }
+      }
+   ],
+   "offer":[
+      {
+         "@type":"Offer",
+         "url":"https://www.edeka24.de/Wein-Spirituosen/Spirituosen/Vodka/Danzka-Premium-Vodka-Grapefruit-0-7L.html",
+         "sku":"1194795008",
+         "priceSpecification":[
+            {
+               "@type":"PriceSpecification",
+               "price":"14.99",
+               "priceCurrency":"EUR"
+            }
+         ],
+         "seller":{
+            "@type":"Organization",
+            "@id":"https://www.edeka24.de/",
+            "url":"https://www.edeka24.de/",
+            "legalName":"neukauf markt GmbH"
+         }
+      }
+   ]
+}
