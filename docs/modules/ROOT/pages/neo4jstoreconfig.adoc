@@ -1,17 +1,17 @@
-== Neo4j Store Config
+= Neo4j Store Config
 [.procedures, opts=header]
 
 This object is used to configure the Neo4j Store to connect to your Neo4j Instance and to manage the parsing of a Triple Store.
 
-=== Object Initialization
+== Constructor
 |===
 | Name | Type | Required | Values(Default) | Description
 | auth_data | Dictionary | True | ("uri", "database", "user", "pwd") | A dictionary containing authentication data. The required keys are: ["uri", "database", "user", "pwd"].
 | batching | Boolean | False | boolean (True) | A boolean indicating whether batching is enabled.
 | batch_size | Integer | False | (5000) | An integer representing the batch size (The batch size is intended as number of entities to store inside the database (nodes/relationships) and not triples.
 | custom_mappings | List[Tuple[Str,Str,Str]] | False | Empty list | A list of tuples containing custom mappings for prefixes in the form (prefix, object_to_replace, new_object).
-| custom_prefixes | Dictionary | True if handle_vocab_uri_strategy ==  HANDLE_VOCAB_URI_STRATEGY.SHORTEN | ({}) | A dictionary containing custom prefixes.
-| handle_vocab_uri_strategy | HANDLE_VOCAB_URI_STRATEGY | False |HANDLE_VOCAB_URI_STRATEGY.IGNORE, HANDLE_VOCAB_URI_STRATEGY.KEEP, HANDLE_VOCAB_URI_STRATEGY.MAP(HANDLE_VOCAB_URI_STRATEGY.SHORTEN) |
+| custom_prefixes | Dictionary | True ① | ({}) | A dictionary containing custom prefixes.  
+| handle_vocab_uri_strategy | HANDLE_VOCAB_URI_STRATEGY | False |IGNORE, KEEP, MAP, (SHORTEN) |
 
 * 'SHORTEN',  full uris are shortened using prefixes for property names, relationship names and labels. Fails if a prefix is not predefined for a namespace in the imported RDF.
 
@@ -21,12 +21,14 @@ This object is used to configure the Neo4j Store to connect to your Neo4j Instan
 
 * 'KEEP' uris are kept unchanged
 
-| handle_multival_strategy | HANDLE_MULTIVAL_STRATEGY | False | HANDLE_MULTIVAL_STRATEGY.ARRAY (HANDLE_MULTIVAL_STRATEGY.OVERWRITE)|
+| handle_multival_strategy | HANDLE_MULTIVAL_STRATEGY | False | ARRAY (OVERWRITE)|
 * 'OVERWRITE' property values are kept single valued. Multiple values in the imported RDF are overwriten (only the last one is kept)
 
 * 'ARRAY' properties are stored in an array enabling storage of multiple values. All of them unless multivalPropList is set.
 | multival_props_names | List[Tuple[Str,Str]] | False | ([]) | A list of tuples containing the prefix and property names to be treated as multivalued in the form (prefix, property_name).
 |===
+
+① if handle_vocab_uri_strategy ==  HANDLE_VOCAB_URI_STRATEGY.SHORTEN
 
 == Functions
 
@@ -188,7 +190,7 @@ No arguments
 | Dictionary | A dictionary containing all prefixes.
 |===
 
-== Enumerators
+== Enumerated Values
 
 === HANDLE_VOCAB_URI_STRATEGY
 
@@ -203,12 +205,6 @@ Enum class defining different strategies for handling vocabulary URIs.
 | KEEP | Strategy to keep the URIs
 | IGNORE | Strategy to ignore the Namespace and get only the local part
 |===
-
-=== Examples
-
-Here a series of examples of the application of a strategy on a certain triplet.
-
-#TODO: Fill the examples#
 
 === Shorten
 
@@ -229,7 +225,7 @@ This strategy will remove the entire prefix from the predicate.
 
 Enum class defining different strategies for handling multiple values.
 
-TO NOTICE: If the strategy is ARRAY and the Neo4jStoreConfig doesn't contain any predicate marked as multivalued, EVERY field will be treated as multivalued.
+> If the strategy is ARRAY and the Neo4jStoreConfig doesn't contain any predicate marked as multivalued, EVERY field will be treated as multivalued.
 
 ==== Possible Values
 
@@ -239,9 +235,6 @@ TO NOTICE: If the strategy is ARRAY and the Neo4jStoreConfig doesn't contain any
 | ARRAY | Strategy to treat multiple values as an array
 |===
 
-=== Examples
-
-Here a series of examples of the application of a strategy on a certain triplet.
 
 === Overwrite
 
