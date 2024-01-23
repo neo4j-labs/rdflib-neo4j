@@ -1,1 +1,13 @@
-jsdhdfvjfdvfv
+# RDFLib-Neo4j
+
+The **rdflib-neo4j** project is a Python-based https://rdflib.readthedocs.io/en/stable/[RDFLib Store] backed by Neo4j.
+You can use this library for high-performance RDF data ingestion into the Neo4j database.
+
+This library works with all types of Neo4j deployments, whether on-premise or cloud-hosted (Neo4j Aura).
+
+## Documentation
+
+- To get started, see the link:quickstart[Quickstart] page.
+- For details on the available Python classes, see the link:neo4jstore[Neo4j Store] page.
+- Example code fragments are available under link:examples[Examples].
+- If you want to contribute to this project, see link:contributing[Contributing].

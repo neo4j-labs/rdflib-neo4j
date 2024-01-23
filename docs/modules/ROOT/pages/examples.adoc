@@ -1,0 +1,149 @@
+= Examples
+
+This page contains some code snippets with examples on using the library.
+
+== Importing a TTL file
+This a basic example for importing a single TTL file.
+Insert your own database credentials for `AURA_DB_URI`, `AURA_DB_USERNAME`, `AURA_DB_PWD` to use this template.
+
+[source,python]
+----
+from rdflib_neo4j import Neo4jStoreConfig
+from rdflib_neo4j import HANDLE_VOCAB_URI_STRATEGY
+
+# Get your Aura Db free instance here: https://neo4j.com/cloud/aura-free/#test-drive-section
+AURA_DB_URI="your_db_uri"
+AURA_DB_USERNAME="neo4j"
+AURA_DB_PWD="your_db_pwd"
+
+auth_data = {'uri': AURA_DB_URI,
+             'database': "neo4j",
+             'user': AURA_DB_USERNAME,
+             'pwd': AURA_DB_PWD}
+from rdflib import Namespace
+
+# Define your prefixes
+prefixes = {
+    'neo4ind': Namespace('http://neo4j.org/ind#'),
+    'neo4voc': Namespace('http://neo4j.org/vocab/sw#'),
+    'nsmntx': Namespace('http://neo4j.org/vocab/NSMNTX#'),
+    'apoc': Namespace('http://neo4j.org/vocab/APOC#'),
+    'graphql': Namespace('http://neo4j.org/vocab/GraphQL#')
+}
+# Define your custom mappings
+config = Neo4jStoreConfig(auth_data=auth_data,
+                          custom_prefixes=prefixes,
+                          handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+                          batching=True)
+from rdflib_neo4j import Neo4jStore
+from rdflib import Graph
+file_path = 'https://raw.githubusercontent.com/neo4j-labs/neosemantics/3.5/docs/rdf/nsmntx.ttl'
+
+graph_store = Graph(store=Neo4jStore(config=config))
+graph_store.parse(file_path,format="ttl")
+graph_store.close(True)
+----
+
+== Advanced Examples
+
+=== Initialize Neo4jStore
+
+[source,python]
+----
+from rdflib_neo4j import Neo4jStoreConfig, Neo4jStore, HANDLE_VOCAB_URI_STRATEGY
+from rdflib import Namespace, Graph, URIRef, RDF, SKOS, Literal
+     
+
+# Define your custom prefixes
+prefixes = {
+    'neo4ind': Namespace('http://neo4j.org/ind#'),
+    'neo4voc': Namespace('http://neo4j.org/vocab/sw#'),
+}
+
+# Neo4j connection credentials
+auth_data = {'uri': 'your_neo4j_uri',
+                     'database': 'neo4j',
+                     'user': "neo4j",
+                     'pwd': 'your_password'}
+
+# Define your Neo4jStoreConfig
+config = Neo4jStoreConfig(auth_data=auth_data,
+                          custom_prefixes=prefixes,
+                          handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+                          batching=False)
+
+neo4j_store = Neo4jStore(config=config)
+graph_store = Graph(store=neo4j_store)
+
+----
+
+=== Import by Reference URL
+
+[source,python]
+----
+file_path = 'https://raw.githubusercontent.com/neo4j-labs/neosemantics/3.5/docs/rdf/nsmntx.ttl'
+graph_store.parse(file_path,format="ttl")
+----
+
+=== Write Individual Triples
+
+[source,python]
+----
+aura = URIRef("http://neo4j.com/voc/tech#AuraDB")
+
+graph_store.add((aura, RDF.type, SKOS.Concept))
+graph_store.add((aura, SKOS.prefLabel, Literal("AuraDB")))
+graph_store.add((aura, SKOS.broader, URIRef("http://neo4j.org/ind#neo4j355")))
+     
+----
+
+=== SPARQL Query with Batching
+
+[source,python]
+----
+import requests
+import urllib.parse
+
+endpoint = "https://id.nlm.nih.gov/mesh/sparql"
+sparql = """
+PREFIX rdfs: 
+PREFIX meshv: 
+PREFIX mesh: 
+PREFIX rdf: 
+
+CONSTRUCT { ?s ?p ?o }
+FROM 
+WHERE {
+  {
+    ?s ?p ?o
+    filter(?s = mesh:D000086402 || ?o = mesh:D000086402)
+   }
+   union
+  {
+    mesh:D000086402 ?x ?s  .
+    ?s ?p ?o .
+    filter(?x != rdf:type && (isLiteral(?o) || ?p = rdf:type))
+  }
+   union
+  {
+    ?s ?x mesh:D000086402 .
+    ?s ?p ?o .
+    filter(isLiteral(?o|| ?p = rdf:type))
+  }
+}
+"""
+
+# Define your Neo4jStoreConfig
+config = Neo4jStoreConfig(auth_data=auth_data,
+                          custom_prefixes=prefixes,
+                          handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+                          batching=True)
+
+neo4j_store = Neo4jStore(config=config)
+graph_store = Graph(store=neo4j_store)
+
+query_response = requests.get(endpoint, params = {"query": sparql , "format" : "TURTLE"})
+graph_store.parse(data=query_response.text,format='ttl')
+graph_store.close(commit_pending_transaction=True)
+
+----

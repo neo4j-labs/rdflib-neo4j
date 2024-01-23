@@ -1,3 +1,0 @@
-== Using the Neo4j store and examples
-
-== Migrating an existing implementation to the Neo4j Store
