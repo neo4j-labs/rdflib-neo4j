@@ -191,10 +191,7 @@ class Neo4jStoreConfig:
         Parameters:
         - auth: A dictionary containing authentication data.
 
-        Raises:
-        - WrongAuthenticationException: If any of the required authentication fields is missing.
         """
-        check_auth_data(auth=auth)
         self.auth_data = auth
 
     def set_batching(self, val: bool):
@@ -225,5 +222,4 @@ class Neo4jStoreConfig:
         Raises:
         - WrongAuthenticationException: If any of the required authentication fields is missing.
         """
-        check_auth_data(auth=self.auth_data)
         return vars(self)

@@ -3,7 +3,7 @@ from rdflib.namespace import FOAF
 from test.integration.constants import GET_DATA_QUERY, RDFLIB_DB
 import pytest
 from test.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
-    cleanup_databases
+    cleanup_databases, neo4j_connection_parameters
 
 
 def test_import_type_as_label(neo4j_driver, graph_store):

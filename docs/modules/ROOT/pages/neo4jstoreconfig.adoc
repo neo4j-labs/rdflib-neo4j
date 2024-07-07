@@ -6,7 +6,7 @@ This object is used to configure the Neo4j Store to connect to your Neo4j Instan
 == Constructor
 |===
 | Name | Type | Required | Values(Default) | Description
-| auth_data | Dictionary | True | ("uri", "database", "user", "pwd") | A dictionary containing authentication data. The required keys are: ["uri", "database", "user", "pwd"].
+| auth_data | Dictionary | Yes, unless a driver object is passed in the store init | ("uri", "database", "user", "pwd") | A dictionary containing authentication data. The required keys are: ["uri", "database", "user", "pwd"].
 | batching | Boolean | False | boolean (True) | A boolean indicating whether batching is enabled.
 | batch_size | Integer | False | (5000) | An integer representing the batch size (The batch size is intended as number of entities to store inside the database (nodes/relationships) and not triples.
 | custom_mappings | List[Tuple[Str,Str,Str]] | False | Empty list | A list of tuples containing custom mappings for prefixes in the form (prefix, object_to_replace, new_object).
