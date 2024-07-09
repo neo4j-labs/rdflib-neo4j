@@ -6,7 +6,8 @@ This class is an implementation of the rdflib link:https://rdflib.readthedocs.io
 == Constructor
 |===
 | Name | Type | Required | Default | Description
-|config|Neo4jStoreConfig|True||Neo4jStoreConfig object that contains all the useful informations to initialize the store.
+|config|Neo4jStoreConfig|True||Neo4jStoreConfig object that contains all the useful information to initialize the store.
+|driver|Neo4jStoreConfig|False|None|A pre-built Neo4j driver object to use to connect to the database. You cannot specify both a driver and credentials in the Neo4jStoreConfig.
 |===
 
 == Functions
