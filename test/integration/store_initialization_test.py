@@ -8,7 +8,7 @@ from test.integration.fixtures import neo4j_connection_parameters, neo4j_driver,
 
 
 def test_initialize_store_with_credentials(neo4j_connection_parameters, neo4j_driver):
-
+    """ Test that we can initialize a store by passing the credentials config. """
     auth_data = neo4j_connection_parameters
 
     config = Neo4jStoreConfig(auth_data=auth_data,
@@ -27,7 +27,7 @@ def test_initialize_store_with_credentials(neo4j_connection_parameters, neo4j_dr
 
 
 def test_initialize_store_with_driver(neo4j_driver):
-
+    """ Test that we can initialize a store with a driver. """
     config = Neo4jStoreConfig(auth_data=None,
                               custom_prefixes={},
                               custom_mappings=[],
@@ -44,7 +44,7 @@ def test_initialize_store_with_driver(neo4j_driver):
 
 
 def test_initialize_with_both_credentials_and_driver_should_fail(neo4j_connection_parameters, neo4j_driver):
-
+    """ Test that we can't initialize a store with both credentials and a driver. """
     config = Neo4jStoreConfig(auth_data=neo4j_connection_parameters,
                               custom_prefixes={},
                               custom_mappings=[],
