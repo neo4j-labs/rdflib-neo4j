@@ -23,6 +23,8 @@ class Neo4jStore(Store):
         self.driver = neo4j_driver
         self.session = None
         self.config = config
+
+        # Check that either driver or credentials are provided
         if not neo4j_driver:
             check_auth_data(config.auth_data)
         elif config.auth_data:

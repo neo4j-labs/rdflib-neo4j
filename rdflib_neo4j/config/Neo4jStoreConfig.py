@@ -5,8 +5,6 @@ from rdflib_neo4j.config.const import (
     PrefixNotFoundException,
     HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
 )
-from rdflib_neo4j.config.utils import check_auth_data
-
 
 class Neo4jStoreConfig:
     """
