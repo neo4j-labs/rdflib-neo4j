@@ -5,8 +5,6 @@ from rdflib_neo4j.config.const import (
     PrefixNotFoundException,
     HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
 )
-from rdflib_neo4j.config.utils import check_auth_data
-
 
 class Neo4jStoreConfig:
     """
@@ -191,10 +189,7 @@ class Neo4jStoreConfig:
         Parameters:
         - auth: A dictionary containing authentication data.
 
-        Raises:
-        - WrongAuthenticationException: If any of the required authentication fields is missing.
         """
-        check_auth_data(auth=auth)
         self.auth_data = auth
 
     def set_batching(self, val: bool):
@@ -225,5 +220,4 @@ class Neo4jStoreConfig:
         Raises:
         - WrongAuthenticationException: If any of the required authentication fields is missing.
         """
-        check_auth_data(auth=self.auth_data)
         return vars(self)

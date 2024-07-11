@@ -6,18 +6,18 @@ from rdflib_neo4j.Neo4jStore import Neo4jStore
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
 from rdflib_neo4j.config.const import ShortenStrictException, HANDLE_VOCAB_URI_STRATEGY
 from test.integration.constants import LOCAL
-from test.integration.utils import records_equal, read_file_n10s_and_rdflib, get_credentials
+from test.integration.utils import records_equal, read_file_n10s_and_rdflib
 import pytest
-from test.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
+from test.integration.fixtures import neo4j_container, neo4j_connection_parameters, neo4j_driver, graph_store, graph_store_batched, \
     cleanup_databases
 
 
-def test_shorten_all_prefixes_defined(neo4j_container, neo4j_driver):
+def test_shorten_all_prefixes_defined(neo4j_driver, neo4j_connection_parameters):
     """
     If we use the strategy HANDLE_VOCAB_URI_STRATEGY.SHORTEN and we provide all the required namespaces,
     it should load all the data without raising an error for a missing prefix
     """
-    auth_data = get_credentials(LOCAL, neo4j_container)
+    auth_data = neo4j_connection_parameters
 
     # Define your prefixes
     prefixes = {
@@ -61,8 +61,8 @@ def test_shorten_all_prefixes_defined(neo4j_container, neo4j_driver):
         assert records_equal(rels[i], rels_from_rdflib[i], rels=True)
 
 
-def test_shorten_missing_prefix(neo4j_container, neo4j_driver):
-    auth_data = get_credentials(LOCAL, neo4j_container)
+def test_shorten_missing_prefix(neo4j_driver, neo4j_connection_parameters):
+    auth_data = neo4j_connection_parameters
 
     # Define your prefixes
     prefixes = {
@@ -90,8 +90,8 @@ def test_shorten_missing_prefix(neo4j_container, neo4j_driver):
     assert True
 
 
-def test_keep_strategy(neo4j_container, neo4j_driver):
-    auth_data = get_credentials(LOCAL, neo4j_container)
+def test_keep_strategy(neo4j_driver, neo4j_connection_parameters):
+    auth_data = neo4j_connection_parameters
 
     config = Neo4jStoreConfig(auth_data=auth_data,
                               handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.KEEP,
@@ -111,8 +111,8 @@ def test_keep_strategy(neo4j_container, neo4j_driver):
         assert records_equal(rels[i], rels_from_rdflib[i], rels=True)
 
 
-def test_ignore_strategy(neo4j_container, neo4j_driver):
-    auth_data = get_credentials(LOCAL, neo4j_container)
+def test_ignore_strategy(neo4j_driver, neo4j_connection_parameters):
+    auth_data = neo4j_connection_parameters
 
     config = Neo4jStoreConfig(auth_data=auth_data,
                               handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
@@ -130,3 +130,32 @@ def test_ignore_strategy(neo4j_container, neo4j_driver):
     assert len(rels_from_rdflib) == len(rels)
     for i in range(len(rels)):
         assert records_equal(rels[i], rels_from_rdflib[i], rels=True)
+
+
+def test_ignore_strategy_on_json_ld_file(neo4j_driver, neo4j_connection_parameters):
+    auth_data = neo4j_connection_parameters
+
+    # Define your prefixes
+    prefixes = {
+        'neo4ind': Namespace('http://neo4j.org/ind#'),
+    }
+
+    # Define your custom mappings
+    custom_mappings = []
+
+    multival_props_names = []
+
+    config = Neo4jStoreConfig(auth_data=auth_data,
+                              custom_prefixes=prefixes,
+                              custom_mappings=custom_mappings,
+                              multival_props_names=multival_props_names,
+                              handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+                              batching=False)
+
+    graph_store = Graph(store=Neo4jStore(config=config))
+
+    try:
+        graph_store.parse(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../test_files/n10s_example.json"))
+    except Exception as e:
+        assert isinstance(e, ShortenStrictException)
+    assert True

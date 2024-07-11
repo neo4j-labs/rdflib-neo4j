@@ -1,13 +1,14 @@
 from typing import Dict
 
 from rdflib.store import Store
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, Driver
 from neo4j import WRITE_ACCESS
 import logging
 
 from rdflib_neo4j.Neo4jTriple import Neo4jTriple
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
 from rdflib_neo4j.config.const import NEO4J_DRIVER_USER_AGENT_NAME
+from rdflib_neo4j.config.utils import check_auth_data
 from rdflib_neo4j.query_composers.NodeQueryComposer import NodeQueryComposer
 from rdflib_neo4j.query_composers.RelationshipQueryComposer import RelationshipQueryComposer
 from rdflib_neo4j.utils import handle_neo4j_driver_exception
@@ -15,11 +16,20 @@ from rdflib_neo4j.utils import handle_neo4j_driver_exception
 
 class Neo4jStore(Store):
 
-    def __init__(self, config: Neo4jStoreConfig):
+    context_aware = True
+
+    def __init__(self, config: Neo4jStoreConfig, neo4j_driver: Driver = None):
         self.__open = False
-        self.driver = None
+        self.driver = neo4j_driver
         self.session = None
         self.config = config
+
+        # Check that either driver or credentials are provided
+        if not neo4j_driver:
+            check_auth_data(config.auth_data)
+        elif config.auth_data:
+            raise Exception("Either initialize the store with credentials or driver. You cannot do both.")
+
         super(Neo4jStore, self).__init__(config.get_config_dict())
 
         self.batching = config.batching
@@ -48,6 +58,21 @@ class Neo4jStore(Store):
         self.__create_session()
         self.__constraint_check(create)
         self.__set_open(True)
+
+    def close(self, commit_pending_transaction=True):
+        """
+        Closes the store.
+
+        Args:
+            commit_pending_transaction (bool): Flag indicating whether to commit any pending transaction before closing.
+        """
+        if commit_pending_transaction:
+            self.commit(commit_nodes=True)
+            self.commit(commit_rels=True)
+        self.session.close()
+        self.__set_open(False)
+        print(f"IMPORTED {self.total_triples} TRIPLES")
+        self.total_triples=0
 
     def is_open(self):
         """
@@ -108,23 +133,6 @@ class Neo4jStore(Store):
     def remove(self, triple, context=None, txn=None):
         raise NotImplemented("This is a streamer so it doesn't preserve the state, there is no removal feature.")
 
-    def close(self, commit_pending_transaction=True):
-        """
-        Closes the store.
-
-        Args:
-            commit_pending_transaction (bool): Flag indicating whether to commit any pending transaction before closing.
-        """
-        if commit_pending_transaction:
-            if self.node_buffer_size > 0:
-                self.commit(commit_nodes=True)
-            if self.rel_buffer_size > 0:
-                self.commit(commit_rels=True)
-        self.session.close()
-        self.driver.close()
-        self.__set_open(False)
-        print(f"IMPORTED {self.total_triples} TRIPLES")
-
     def __close_on_error(self):
         """
         Empties the query buffers in case of an error.
@@ -144,6 +152,18 @@ class Neo4jStore(Store):
             val (bool): The value to set for the 'open' status.
         """
         self.__open = val
+        print(f"The store is now: {'Open' if self.__open else 'Closed'}")
+
+    def __get_driver(self) -> Driver:
+        if not self.driver:
+            auth_data = self.config.auth_data
+            self.driver = GraphDatabase.driver(
+                auth_data['uri'],
+                auth=(auth_data['user'], auth_data['pwd']),
+                database=auth_data.get('database', 'neo4j'),
+                user_agent=NEO4J_DRIVER_USER_AGENT_NAME
+            )
+        return self.driver
 
     def __create_session(self):
         """
@@ -153,13 +173,7 @@ class Neo4jStore(Store):
 
         """
         auth_data = self.config.auth_data
-        self.driver = GraphDatabase.driver(
-            auth_data['uri'],
-            auth=(auth_data['user'], auth_data['pwd']),
-            user_agent=NEO4J_DRIVER_USER_AGENT_NAME
-        )
-        self.session = self.driver.session(
-            database=auth_data.get('database', 'neo4j'),
+        self.session = self.__get_driver().session(
             default_access_mode=WRITE_ACCESS
         )
 

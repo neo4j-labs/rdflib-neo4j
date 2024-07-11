@@ -4,7 +4,7 @@ from test.integration.constants import GET_DATA_QUERY, RDFLIB_DB
 from test.integration.utils import records_equal, read_file_n10s_and_rdflib
 import pytest
 from test.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
-    cleanup_databases
+    cleanup_databases, neo4j_connection_parameters
 
 
 def test_import_person(neo4j_driver, graph_store):

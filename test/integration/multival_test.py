@@ -2,17 +2,17 @@ from test.integration.constants import LOCAL, RDFLIB_DB
 from rdflib import Graph, Namespace
 from rdflib_neo4j.Neo4jStore import Neo4jStore
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
-from test.integration.utils import records_equal, read_file_n10s_and_rdflib, create_graph_store, get_credentials
+from test.integration.utils import records_equal, read_file_n10s_and_rdflib
 from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
 import pytest
 from test.integration.fixtures import neo4j_container, neo4j_driver, graph_store, graph_store_batched, \
-    cleanup_databases
+    cleanup_databases, neo4j_connection_parameters
 
 
-def test_read_file_multival_with_strategy_no_predicates(neo4j_container, neo4j_driver):
+def test_read_file_multival_with_strategy_no_predicates(neo4j_driver, neo4j_connection_parameters):
     """Compare data imported with n10s procs and n10s + rdflib in single add mode for multivalues"""
 
-    auth_data = get_credentials(LOCAL, neo4j_container)
+    auth_data = neo4j_connection_parameters
 
     # Define your prefixes
     prefixes = {}
@@ -40,9 +40,9 @@ def test_read_file_multival_with_strategy_no_predicates(neo4j_container, neo4j_d
         assert records_equal(records[i], records_from_rdf_lib[i])
 
 
-def test_read_file_multival_with_strategy_and_predicates(neo4j_container, neo4j_driver):
+def test_read_file_multival_with_strategy_and_predicates(neo4j_driver, neo4j_connection_parameters):
     """Compare data imported with n10s procs and n10s + rdflib in single add mode for multivalues"""
-    auth_data = get_credentials(LOCAL, neo4j_container)
+    auth_data = neo4j_connection_parameters
 
     # Define your prefixes
     prefixes = {
@@ -72,9 +72,9 @@ def test_read_file_multival_with_strategy_and_predicates(neo4j_container, neo4j_
         assert records_equal(records[i], records_from_rdf_lib[i])
 
 
-def test_read_file_multival_with_no_strategy_and_predicates(neo4j_container, neo4j_driver):
+def test_read_file_multival_with_no_strategy_and_predicates(neo4j_driver, neo4j_connection_parameters):
     """Compare data imported with n10s procs and n10s + rdflib in single add mode for multivalues"""
-    auth_data = get_credentials(LOCAL, neo4j_container)
+    auth_data = neo4j_connection_parameters
 
     # Define your prefixes
     prefixes = {
@@ -101,9 +101,9 @@ def test_read_file_multival_with_no_strategy_and_predicates(neo4j_container, neo
     for i in range(len(records)):
         assert records_equal(records[i], records_from_rdf_lib[i])
 
-def test_read_file_multival_array_as_set_behavior(neo4j_container, neo4j_driver):
+def test_read_file_multival_array_as_set_behavior(neo4j_driver, neo4j_connection_parameters):
     """When importing the data, if a triple will add the same value to a multivalued property it won't be added"""
-    auth_data = get_credentials(LOCAL, neo4j_container)
+    auth_data = neo4j_connection_parameters
 
     prefixes = {'music': Namespace('neo4j://graph.schema#')}
 
