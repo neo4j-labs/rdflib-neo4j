@@ -6,7 +6,7 @@ An external workflow picks up this directory, embeds it into the Neo4j docs, and
 ```
 https://neo4j.com/labs/rdflib-neo4j/{version}
 ```
-For example: https://neo4j.com/labs/rdflib-neo4j/1.0
+For example: https://neo4j.com/labs/rdflib-neo4j/1.1
 
 ## Local Build
 To compile and view the documentation locally, navigate to this (`./docs`) folder and run:
