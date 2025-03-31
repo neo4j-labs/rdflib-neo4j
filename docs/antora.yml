@@ -1,5 +1,5 @@
 name: rdflib-neo4j
-version: "1.0"
+version: "1.1"
 title: RDFLib-Neo4j
 start_page: ROOT:index.adoc
 nav:
@@ -7,7 +7,7 @@ nav:
 
 asciidoc:
   attributes:
-    docs-version: "1.0"
+    docs-version: "1.1"
     page-product: RDFLib-Neo4j
     page-type: RDFLib-Neo4j Manual
     page-canonical-root: /labs
