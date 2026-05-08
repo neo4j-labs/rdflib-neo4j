@@ -66,13 +66,15 @@ class HANDLE_VOCAB_URI_STRATEGY(Enum):
     """
     Enum class defining different strategies for handling vocabulary URIs.
 
-    - SHORTEN : Strategy to shorten the URIs (Every prefix that you will use must be defined in the config, otherwise Neo4jStore will throw a ShortenStrictException)
+    - SHORTEN_STRICT : All prefixes must be pre-declared; raises ShortenStrictException for unknown namespaces.
+    - SHORTEN : Dynamic mode — auto-generates nsN__ prefix for unknown namespaces (matches n10s semantics).
     - MAP : Strategy to map the URIs using provided mappings
     - KEEP : Strategy to keep the URIs
     - IGNORE : Strategy to ignore the Namespace and get only the local part
 
     """
-    SHORTEN = "SHORTEN"  # Strategy to shorten the URIs
+    SHORTEN_STRICT = "SHORTEN_STRICT"  # All prefixes must be pre-declared; fails on unknown namespaces
+    SHORTEN = "SHORTEN"                # Dynamic: auto-generates nsN__ prefix for unknown namespaces
     MAP = "MAP"  # Strategy to map the URIs using provided mappings
     KEEP = "KEEP"  # Strategy to keep the URIs
     IGNORE = "IGNORE"  # Strategy to ignore the Namespace and get only the local part

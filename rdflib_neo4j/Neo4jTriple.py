@@ -22,7 +22,9 @@ class Neo4jTriple:
                  handle_vocab_uri_strategy: HANDLE_VOCAB_URI_STRATEGY,
                  handle_multival_strategy: HANDLE_MULTIVAL_STRATEGY,
                  multival_props_names: List[str],
-                 prefixes: Dict[str, str]):
+                 prefixes: Dict[str, str],
+                 dynamic_ns_map: dict = None,
+                 dynamic_ns_counter: list = None):
         """
         Constructor for Neo4jTriple.
 
@@ -32,6 +34,8 @@ class Neo4jTriple:
             handle_multival_strategy: The strategy to handle multiple values.
             multival_props_names: A list containing URIs to be treated as multivalued.
             prefixes: A dictionary of namespace prefixes used for vocabulary URI handling.
+            dynamic_ns_map: (SHORTEN mode) dict mapping unknown namespace URIs to auto-generated nsN prefixes.
+            dynamic_ns_counter: (SHORTEN mode) single-element list holding the next nsN counter value.
         """
         self.uri = uri
         self.labels = set()
@@ -42,6 +46,8 @@ class Neo4jTriple:
         self.handle_multival_strategy = handle_multival_strategy
         self.multival_props_names = multival_props_names
         self.prefixes = prefixes
+        self.dynamic_ns_map = dynamic_ns_map if dynamic_ns_map is not None else {}
+        self.dynamic_ns_counter = dynamic_ns_counter if dynamic_ns_counter is not None else [0]
 
     def add_label(self, label: str):
         """
@@ -141,7 +147,11 @@ class Neo4jTriple:
         Returns:
             str: The handled predicate URI based on the specified strategy.
         """
-        return handle_vocab_uri(mappings, predicate, self.prefixes, self.handle_vocab_uri_strategy)
+        return handle_vocab_uri(
+            mappings, predicate, self.prefixes, self.handle_vocab_uri_strategy,
+            dynamic_ns_map=self.dynamic_ns_map,
+            counter_ref=self.dynamic_ns_counter,
+        )
 
     def parse_triple(self, triple, mappings):
         """

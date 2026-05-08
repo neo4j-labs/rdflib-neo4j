@@ -113,12 +113,51 @@ def handle_vocab_uri_shorten(predicate, prefixes):
 
     Returns:
     The shortened URI if the namespace exists in the prefixes, otherwise raises a ShortenStrictException.
+
+    .. deprecated::
+        Use handle_vocab_uri_shorten_strict() or handle_vocab_uri_shorten_dynamic() instead.
+    """
+    return handle_vocab_uri_shorten_strict(predicate, prefixes)
+
+
+def handle_vocab_uri_shorten_strict(predicate, prefixes) -> str:
+    """SHORTEN_STRICT: fail if namespace not pre-declared.
+
+    Parameters:
+    - predicate: The URI to be shortened.
+    - prefixes: A dictionary containing namespace prefixes.
+
+    Returns:
+    The shortened URI if the namespace exists in the prefixes, otherwise raises a ShortenStrictException.
     """
     ns = getNamespacePart(predicate)
     local_part = getLocalPart(predicate)
     if ns in prefixes:
         return create_shortened_predicate(namespace=prefixes[ns], local_part=local_part)
     raise ShortenStrictException(ns)
+
+
+def handle_vocab_uri_shorten_dynamic(predicate, prefixes, dynamic_ns_map: dict, counter_ref: list) -> str:
+    """SHORTEN (dynamic): auto-generate nsN prefix for unknown namespaces.
+
+    Parameters:
+    - predicate: The URI to be shortened.
+    - prefixes: A dictionary containing namespace prefixes.
+    - dynamic_ns_map: A dict mapping unknown namespace URIs to their auto-generated nsN prefix.
+    - counter_ref: A single-element list holding the next nsN counter value (mutable reference).
+
+    Returns:
+    The shortened URI, using a pre-declared prefix if available or an auto-generated nsN prefix.
+    """
+    ns = getNamespacePart(predicate)
+    local_part = getLocalPart(predicate)
+    if ns in prefixes:
+        return create_shortened_predicate(namespace=prefixes[ns], local_part=local_part)
+    # Auto-generate a new nsN prefix for unknown namespaces
+    if ns not in dynamic_ns_map:
+        dynamic_ns_map[ns] = f"ns{counter_ref[0]}"
+        counter_ref[0] += 1
+    return create_shortened_predicate(namespace=dynamic_ns_map[ns], local_part=local_part)
 
 
 def handle_vocab_uri_map(mappings: Dict[str, str], predicate: URIRef):
@@ -140,7 +179,9 @@ def handle_vocab_uri_map(mappings: Dict[str, str], predicate: URIRef):
 def handle_vocab_uri(mappings: Dict[str, str],
                      predicate: URIRef,
                      prefixes: Dict[str, str],
-                     strategy: HANDLE_VOCAB_URI_STRATEGY):
+                     strategy: HANDLE_VOCAB_URI_STRATEGY,
+                     dynamic_ns_map: dict = None,
+                     counter_ref: list = None):
     """
     Handles the given predicate URI based on the chosen strategy.
 
@@ -154,11 +195,21 @@ def handle_vocab_uri(mappings: Dict[str, str],
 
     - strategy: The strategy to be used for handling the predicate URI.
 
+    - dynamic_ns_map: (SHORTEN mode only) dict mapping unknown namespace URIs to auto-generated nsN prefixes.
+
+    - counter_ref: (SHORTEN mode only) single-element list holding the next nsN counter value.
+
     Returns:
     The handled predicate URI based on the chosen strategy.
     """
-    if strategy == HANDLE_VOCAB_URI_STRATEGY.SHORTEN:
-        return handle_vocab_uri_shorten(predicate, prefixes)
+    if strategy == HANDLE_VOCAB_URI_STRATEGY.SHORTEN_STRICT:
+        return handle_vocab_uri_shorten_strict(predicate, prefixes)
+    elif strategy == HANDLE_VOCAB_URI_STRATEGY.SHORTEN:
+        return handle_vocab_uri_shorten_dynamic(
+            predicate, prefixes,
+            dynamic_ns_map if dynamic_ns_map is not None else {},
+            counter_ref if counter_ref is not None else [0],
+        )
     elif strategy == HANDLE_VOCAB_URI_STRATEGY.MAP:
         res = handle_vocab_uri_map(mappings, predicate)
         if res == predicate:
