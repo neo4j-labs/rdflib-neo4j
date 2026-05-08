@@ -1,17 +1,22 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
+# Runs compile check, linter, and tests on PRs from members with write access.
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
 
-name: Integration tests
+name: CI
 
 on:
   push:
     branches: ["develop"]
   pull_request:
-    branches: [ "master","develop" ]
+    branches: ["master", "develop"]
 
 jobs:
-  build:
+  ci:
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      github.event.pull_request.author_association == 'OWNER' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.author_association == 'COLLABORATOR'
     strategy:
       fail-fast: true
       matrix:
@@ -28,6 +33,11 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install ruff
+    - name: Compile check
+      run: python -m compileall rdflib_neo4j/
+    - name: Lint
+      run: ruff check rdflib_neo4j/ test/unit/
     - name: Test with pytest
       run: |
         pytest
