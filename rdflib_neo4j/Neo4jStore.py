@@ -34,6 +34,8 @@ class Neo4jStore(Store):
 
         self.batching = config.batching
         self.buffer_max_size = config.batch_size
+        self.preview = config.preview
+        self._preview_results: list = []  # list of (query, params) tuples
 
         self.total_triples = 0
         self.node_buffer_size = 0
@@ -198,6 +200,9 @@ class Neo4jStore(Store):
         constraint_found = next((True for x in result if x["constraint_found"]), False)
 
         if not constraint_found and create:
+            if self.preview:
+                print("Preview mode: skipping constraint creation. Ensure constraint exists before real import.")
+                return
             try:
                 # Create the uniqueness constraint
                 create_constraint = """
@@ -329,13 +334,26 @@ class Neo4jStore(Store):
         """
         Executes a Cypher query on the Neo4j database.
 
+        In preview mode, the query and params are collected instead of executed.
+
         Args:
             query (str): The Cypher query to execute.
             params: The parameters to pass to the query.
         """
+        if self.preview:
+            self._preview_results.append((query, params))
+            return
         try:
             self.session.run(query, params=params)
         except Exception as e:
             e = handle_neo4j_driver_exception(e)
             logging.error(e)
             raise e
+
+    def get_preview_results(self) -> list:
+        """Return list of (query, params) tuples collected in preview mode."""
+        return list(self._preview_results)
+
+    def clear_preview_results(self):
+        """Clear the preview results buffer."""
+        self._preview_results.clear()

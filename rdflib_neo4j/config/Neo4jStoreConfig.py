@@ -38,10 +38,12 @@ class Neo4jStoreConfig:
             batch_size=5000,
             handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN,
             handle_multival_strategy=HANDLE_MULTIVAL_STRATEGY.OVERWRITE,
-            multival_props_names: List[Tuple[str, str]] = []
+            multival_props_names: List[Tuple[str, str]] = [],
+            preview: bool = False
     ):
         self.default_prefixes = DEFAULT_PREFIXES
         self.auth_data = auth_data
+        self.preview = preview
         self.custom_prefixes = custom_prefixes
         self.custom_mappings = {}
         for mapping in custom_mappings:
