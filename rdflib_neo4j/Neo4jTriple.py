@@ -4,7 +4,7 @@ from typing import Dict, Set, List
 from rdflib import Literal, URIRef, RDF
 from rdflib.term import BNode, Node
 from rdflib_neo4j.utils import bnode_to_uri, handle_vocab_uri
-from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
+from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY, HandleRDFTypesStrategy
 
 
 class Neo4jTriple:
@@ -24,7 +24,8 @@ class Neo4jTriple:
                  multival_props_names: List[str],
                  prefixes: Dict[str, str],
                  dynamic_ns_map: dict = None,
-                 dynamic_ns_counter: list = None):
+                 dynamic_ns_counter: list = None,
+                 handle_rdf_types_strategy: HandleRDFTypesStrategy = HandleRDFTypesStrategy.LABELS):
         """
         Constructor for Neo4jTriple.
 
@@ -36,6 +37,7 @@ class Neo4jTriple:
             prefixes: A dictionary of namespace prefixes used for vocabulary URI handling.
             dynamic_ns_map: (SHORTEN mode) dict mapping unknown namespace URIs to auto-generated nsN prefixes.
             dynamic_ns_counter: (SHORTEN mode) single-element list holding the next nsN counter value.
+            handle_rdf_types_strategy: The strategy to handle rdf:type triples.
         """
         self.uri = uri
         self.labels = set()
@@ -48,6 +50,8 @@ class Neo4jTriple:
         self.prefixes = prefixes
         self.dynamic_ns_map = dynamic_ns_map if dynamic_ns_map is not None else {}
         self.dynamic_ns_counter = dynamic_ns_counter if dynamic_ns_counter is not None else [0]
+        self.handle_rdf_types_strategy = handle_rdf_types_strategy
+        self._rdf_type_class_uris: set = set()
 
     def add_label(self, label: str):
         """
@@ -136,6 +140,16 @@ class Neo4jTriple:
         """
         return {key: list(value) for key, value in self.relationships.items()}
 
+    def extract_rdf_type_class_uris(self) -> set:
+        """
+        Returns the set of Class URIs encountered via rdf:type triples when using
+        NODES or LABELS_AND_NODES strategies. These URIs need corresponding :Class nodes.
+
+        Returns:
+            set: The set of class URIs.
+        """
+        return self._rdf_type_class_uris
+
     def handle_vocab_uri(self, mappings, predicate):
         """
         Handles a vocabulary URI according to the specified strategy, defined using the HANDLE_VOCAB_URI_STRATEGY Enum.
@@ -179,9 +193,19 @@ class Neo4jTriple:
             else:
                 self.add_prop(prop_name, value)
 
-        # Getting a label
+        # Getting a label / class node depending on strategy
         elif predicate == RDF.type:
-            self.add_label(self.handle_vocab_uri(mappings, object))
+            class_uri = self.handle_vocab_uri(mappings, object)
+            strategy = self.handle_rdf_types_strategy
+
+            if strategy in (HandleRDFTypesStrategy.LABELS, HandleRDFTypesStrategy.LABELS_AND_NODES):
+                self.add_label(class_uri)
+
+            if strategy in (HandleRDFTypesStrategy.NODES, HandleRDFTypesStrategy.LABELS_AND_NODES):
+                # Record as relationship: (subject)-[:rdf__type]->(class_node)
+                # Use the full class URI as the target node URI so the Class node is merged on full URI
+                self.add_rel("rdf__type", object)
+                self._rdf_type_class_uris.add(object)
 
         # Getting its relationships
         else:

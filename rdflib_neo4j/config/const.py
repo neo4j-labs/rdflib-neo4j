@@ -57,7 +57,7 @@ class CypherMultipleTypesMultiValueException(Exception):
         super().__init__()
 
     def __str__(self):
-        return f"""Values of a multivalued property must have the same datatype."""
+        return """Values of a multivalued property must have the same datatype."""
 
 NEO4J_DRIVER_MULTIPLE_TYPE_ERROR_MESSAGE = """{code: Neo.ClientError.Statement.TypeError} {message: Neo4j only supports a subset of Cypher types for storage as singleton or array properties. Please refer to section cypher/syntax/values of the manual for more details.}"""
 NEO4J_DRIVER_DICT_MESSAGE = {NEO4J_DRIVER_MULTIPLE_TYPE_ERROR_MESSAGE: CypherMultipleTypesMultiValueException}
@@ -91,3 +91,18 @@ class HANDLE_MULTIVAL_STRATEGY(Enum):
     """
     OVERWRITE = 1  # Strategy to overwrite multiple values
     ARRAY = 2  # Strategy to treat multiple values as an array
+
+
+class HandleRDFTypesStrategy(Enum):
+    """
+    Strategy for handling rdf:type triples.
+
+    - LABELS: add Neo4j label (default, matches existing behaviour)
+    - NODES: create :Class node + [:rdf__type] relationship (no label)
+    - LABELS_AND_NODES: both label and Class node + relationship
+
+    Values match n10s GraphConfig canonical strings.
+    """
+    LABELS = "LABELS"
+    NODES = "NODES"
+    LABELS_AND_NODES = "LABELS_AND_NODES"
