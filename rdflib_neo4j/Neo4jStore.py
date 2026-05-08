@@ -18,7 +18,7 @@ class Neo4jStore(Store):
 
     context_aware = True
 
-    def __init__(self, config: Neo4jStoreConfig, neo4j_driver: Driver = None):
+    def __init__(self, config: Neo4jStoreConfig, neo4j_driver: Driver | None = None):
         self.__open = False
         self.driver = neo4j_driver
         self.session = None
