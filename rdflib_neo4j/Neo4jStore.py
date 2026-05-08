@@ -57,7 +57,63 @@ class Neo4jStore(Store):
         """
         self.__create_session()
         self.__constraint_check(create)
+        self._load_ns_prefixes_from_db()
+        self._write_graph_config()
+        self._write_ns_prefixes()
         self.__set_open(True)
+
+    def _write_graph_config(self):
+        """
+        Writes the graph configuration to the _GraphConfig node in Neo4j.
+
+        Uses additive SET += so unknown fields added by n10s or other tools are preserved.
+        """
+        params = {
+            "_handleVocabUris": self.config.handle_vocab_uri_strategy.value,
+            "_handleMultival": self.config.handle_multival_strategy.value,
+            "_keepLangTag": getattr(self.config, "keep_lang_tag", False),
+            "_keepCustomDataTypes": getattr(self.config, "keep_custom_data_types", False),
+            "_applyNeo4jNaming": getattr(self.config, "apply_neo4j_naming", False),
+        }
+        if hasattr(self.config, "handle_rdf_types_strategy"):
+            params["_handleRDFTypes"] = self.config.handle_rdf_types_strategy.value
+        query = "MERGE (gc:_GraphConfig {_id: 1}) SET gc += $params"
+        self.__query_database(query, {"params": params})
+
+    def _write_ns_prefixes(self):
+        """
+        Writes namespace prefixes to the _NsPrefDef node in Neo4j.
+
+        Each prefix is stored as a property on the single _NsPrefDef node.
+        Uses additive SET += so n10s-managed prefixes not in our config are preserved.
+        """
+        all_prefixes = self.config.get_prefixes()
+        props = {k: str(v) for k, v in all_prefixes.items()}
+        query = "MERGE (nsp:_NsPrefDef {_id: 1}) SET nsp += $props"
+        self.__query_database(query, {"props": props})
+
+    def _load_ns_prefixes_from_db(self):
+        """
+        Loads namespace prefixes from an existing _NsPrefDef node (n10s interop).
+
+        When opening a database that was previously used with neosemantics (n10s),
+        this picks up any namespace prefixes already defined there and adds them
+        to the config so they can be used for URI shortening.
+        """
+        try:
+            result = self.session.run(
+                "MATCH (nsp:_NsPrefDef {_id: 1}) RETURN properties(nsp) AS props"
+            )
+            record = result.single()
+            if record:
+                props = record["props"]
+                for key, val in props.items():
+                    if key == "_id":
+                        continue
+                    if key not in self.config.get_prefixes():
+                        self.config.set_custom_prefix(key, val)
+        except Exception:
+            pass  # No _NsPrefDef node exists yet — that's fine
 
     def close(self, commit_pending_transaction=True):
         """
@@ -131,7 +187,7 @@ class Neo4jStore(Store):
         self.__flushBuffer(commit_nodes, commit_rels)
 
     def remove(self, triple, context=None, txn=None):
-        raise NotImplemented("This is a streamer so it doesn't preserve the state, there is no removal feature.")
+        raise NotImplementedError("This is a streamer so it doesn't preserve the state, there is no removal feature.")
 
     def __close_on_error(self):
         """
@@ -172,7 +228,6 @@ class Neo4jStore(Store):
         This function initializes the driver and session based on the provided configuration.
 
         """
-        auth_data = self.config.auth_data
         self.session = self.__get_driver().session(
             default_access_mode=WRITE_ACCESS
         )
