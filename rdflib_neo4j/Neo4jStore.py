@@ -46,6 +46,9 @@ class Neo4jStore(Store):
         self.handle_multival_strategy = config.handle_multival_strategy
         self.multival_props_predicates = config.multival_props_names
 
+        self._node_cache: dict = {}
+        self._node_cache_max = config.node_cache_size
+
     def open(self, configuration, create=True):
         """
         Opens a connection to the Neo4j database.
@@ -214,12 +217,46 @@ class Neo4jStore(Store):
                                             "CREATE CONSTRAINT n10s_unique_uri FOR (r:Resource) REQUIRE r.uri IS UNIQUE. Or provide create=True to create it."} 
                 """)
 
+    def _is_node_cached(self, uri: str) -> bool:
+        """
+        Returns True if the node URI is already in the in-process cache.
+
+        Args:
+            uri (str): The URI of the node to check.
+        """
+        return uri in self._node_cache
+
+    def _cache_node(self, uri: str):
+        """
+        Adds the node URI to the in-process cache.
+
+        If node_cache_size is 0 the cache is disabled and nothing is stored.
+        When the cache exceeds the configured maximum size, the oldest entry is
+        evicted (Python 3.7+ dicts maintain insertion order).
+
+        Args:
+            uri (str): The URI of the node to cache.
+        """
+        if self._node_cache_max == 0:
+            return
+        self._node_cache[uri] = True
+        if len(self._node_cache) > self._node_cache_max:
+            # Evict the oldest entry (first key in insertion-order dict)
+            oldest = next(iter(self._node_cache))
+            del self._node_cache[oldest]
+
     def __store_current_subject_props(self):
         """
         Stores the properties of the current subject in the respective node buffer.
 
         This function adds the properties of the current subject to the node buffer for later insertion into the Neo4j database.
+        A URI being present in the cache means it has been seen before, but the same subject URI can appear multiple times
+        in an RDF file with different properties (when triples are not sorted by subject). All occurrences are written to
+        the buffer so their properties are merged via SET n += $props (additive). Only the first encounter adds to the cache.
         """
+        uri = self.current_subject.uri
+        already_cached = self._is_node_cached(uri)
+
         label_key = self.current_subject.extract_label_key()
         if label_key not in self.node_buffer:
             self.node_buffer[label_key] = NodeQueryComposer(labels=self.current_subject.labels,
@@ -231,6 +268,9 @@ class Neo4jStore(Store):
         query_params = self.current_subject.extract_params()
         self.node_buffer[label_key].add_query_param(query_params)
         self.node_buffer_size += 1
+
+        if not already_cached:
+            self._cache_node(uri)
 
     def __store_current_subject_rels(self):
         """
