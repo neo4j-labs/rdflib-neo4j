@@ -1,6 +1,8 @@
 from typing import Dict
 
+from rdflib import Literal, RDF
 from rdflib.store import Store
+from rdflib.term import BNode
 from neo4j import GraphDatabase, Driver
 from neo4j import WRITE_ACCESS
 import logging
@@ -131,7 +133,7 @@ class Neo4jStore(Store):
         self.__flushBuffer(commit_nodes, commit_rels)
 
     def remove(self, triple, context=None, txn=None):
-        raise NotImplemented("This is a streamer so it doesn't preserve the state, there is no removal feature.")
+        raise NotImplementedError("This is a streamer so it doesn't preserve the state, there is no removal feature.")
 
     def __close_on_error(self):
         """
@@ -172,7 +174,6 @@ class Neo4jStore(Store):
         This function initializes the driver and session based on the provided configuration.
 
         """
-        auth_data = self.config.auth_data
         self.session = self.__get_driver().session(
             default_access_mode=WRITE_ACCESS
         )
@@ -286,9 +287,117 @@ class Neo4jStore(Store):
                 self.__store_current_subject()
                 self.current_subject = self.__create_current_subject(subject)
 
+    def triples(self, triple):
+        """
+        Yield triples matching the pattern. Any component may be None (wildcard).
+
+        Args:
+            triple: A (subject, predicate, object) tuple; any element may be None.
+
+        Yields:
+            ((subject, predicate, object), self) tuples, matching the rdflib
+            Store.triples() contract.
+        """
+        assert self.is_open(), "The Store must be open."
+        from rdflib_neo4j.query_composers.ExportQueryComposer import ExportQueryComposer
+        from rdflib_neo4j.expander import expand_uri, neo4j_value_to_literal
+
+        (s, p, o) = triple
+        prefix_map = {name: str(ns) for name, ns in self.config.get_prefixes().items()}
+
+        # Yield property and label triples from a node record
+        def _node_triples(record):
+            subject_uri = record["uri"]
+            subject = expand_uri(subject_uri, prefix_map)
+            # Subject filter
+            if s is not None and subject != s:
+                return
+            props = record["props"]
+            labels = record["extra_labels"]
+
+            # Property triples
+            for prop_key, prop_val in props.items():
+                if prop_key == "uri":
+                    continue
+                predicate = expand_uri(prop_key, prefix_map)
+                if p is not None and predicate != p:
+                    continue
+                if isinstance(prop_val, list):
+                    for v in prop_val:
+                        lit = neo4j_value_to_literal(v, prop_key)
+                        if o is None or o == lit:
+                            yield (subject, predicate, lit), self
+                else:
+                    lit = neo4j_value_to_literal(prop_val, prop_key)
+                    if o is None or o == lit:
+                        yield (subject, predicate, lit), self
+
+            # Label → rdf:type triples
+            if p is None or p == RDF.type:
+                for label in labels:
+                    class_uri = expand_uri(label, prefix_map)
+                    if o is None or o == class_uri:
+                        yield (subject, RDF.type, class_uri), self
+
+        # Yield a relationship triple from a relationship record
+        def _rel_triples(record):
+            from_uri = expand_uri(record["from_uri"], prefix_map)
+            to_uri = expand_uri(record["to_uri"], prefix_map)
+            rel_type = expand_uri(record["rel_type"], prefix_map)
+            if s is not None and from_uri != s:
+                return
+            if p is not None and rel_type != p:
+                return
+            if o is not None and to_uri != o:
+                return
+            yield (from_uri, rel_type, to_uri), self
+
+        if s is not None:
+            # Subject known — query specific node
+            s_uri = f"bnode://{s}" if isinstance(s, BNode) else str(s)
+            node_result = self.session.run(
+                ExportQueryComposer.node_by_uri_query(), uri=s_uri
+            )
+            for record in node_result:
+                yield from _node_triples(record)
+            # Only fetch relationships when predicate is not rdf:type and object
+            # is not a Literal (relationships link Resource nodes only)
+            if p != RDF.type and not isinstance(o, Literal):
+                rel_result = self.session.run(
+                    ExportQueryComposer.relationships_from_uri_query(), uri=s_uri
+                )
+                for record in rel_result:
+                    yield from _rel_triples(record)
+        else:
+            # Subject wildcard — scan all nodes
+            node_result = self.session.run(ExportQueryComposer.all_nodes_query())
+            for record in node_result:
+                yield from _node_triples(record)
+            # Fetch relationships unless we know only Literal objects are wanted
+            if not isinstance(o, Literal):
+                rel_result = self.session.run(ExportQueryComposer.all_relationships_query())
+                for record in rel_result:
+                    yield from _rel_triples(record)
+
     def __len__(self, context=None):
-        # no triple state, just a streamer
-        return 0
+        """
+        Return an approximate triple count.
+
+        Sums: (number of non-uri properties per node) + (number of non-Resource
+        labels per node) + (total relationship count).  This matches the rdflib
+        Store contract better than a raw node count, though it will be exact only
+        when no multi-value properties are stored as arrays.
+        """
+        if not self.is_open():
+            return 0
+        from rdflib_neo4j.query_composers.ExportQueryComposer import ExportQueryComposer
+        result = self.session.run(ExportQueryComposer.count_query())
+        record = result.single()
+        return int(record["cnt"]) if record else 0
+
+    def __iter__(self):
+        """Iterate over all triples in the store."""
+        return (triple for triple, _ in self.triples((None, None, None)))
 
     def __flushBuffer(self, only_nodes, only_rels):
         """
