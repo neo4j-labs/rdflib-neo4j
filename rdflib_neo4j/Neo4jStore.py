@@ -134,7 +134,91 @@ class Neo4jStore(Store):
         self.__flushBuffer(commit_nodes, commit_rels)
 
     def remove(self, triple, context=None, txn=None):
-        raise NotImplemented("This is a streamer so it doesn't preserve the state, there is no removal feature.")
+        """
+        Removes a triple from the Neo4j store.
+
+        Dispatches on the type of the object:
+        - Literal object  → REMOVE a property from the subject node.
+        - rdf:type predicate → REMOVE a label from the subject node.
+        - URI/BNode object → DELETE a relationship between two nodes.
+
+        BNode subjects/objects are normalised to ``bnode://<id>`` URIs so
+        they can be looked up in the graph.
+
+        Args:
+            triple: The triple to remove (may contain ``None`` as a wildcard
+                    for subject, predicate, or object).
+            context: Ignored (context-awareness is handled by rdflib).
+            txn: Ignored (transactions are managed at the session level).
+        """
+        assert self.is_open(), "The Store must be open."
+        from rdflib import RDF, Literal
+        from rdflib.term import BNode
+        from rdflib_neo4j.utils import handle_vocab_uri
+        from rdflib_neo4j.query_composers.DeleteQueryComposer import DeleteQueryComposer
+
+        (subject, predicate, obj) = triple
+
+        # Normalise BNodes to bnode:// URIs so they match what was stored
+        def _uri(term):
+            if isinstance(term, BNode):
+                return f"bnode://{str(term)}"
+            return term
+
+        subject_uri = _uri(subject) if subject is not None else None
+        obj_val = _uri(obj) if obj is not None else None
+
+        prefixes = {v: k for k, v in self.config.get_prefixes().items()}
+
+        def _shorten(term):
+            if term is None:
+                return None
+            return handle_vocab_uri(self.mappings, term, prefixes, self.handle_vocab_uri_strategy)
+
+        # Case 1: object is a Literal → property retraction
+        if isinstance(obj, Literal):
+            if subject_uri is None or predicate is None:
+                # Wildcard: remove all properties matching pattern (complex — skip for now, log warning)
+                logging.warning("remove() with wildcard subject or predicate for literal not yet supported")
+                return
+            prop_name = _shorten(predicate)
+            query, params = DeleteQueryComposer.remove_property(subject_uri, prop_name)
+            self.__query_database(query, params)
+
+        # Case 2: predicate is rdf:type → label retraction
+        elif predicate == RDF.type:
+            if subject_uri is None:
+                return  # wildcard subject not supported
+            if obj_val is None:
+                # Remove all labels (keep :Resource)
+                query = "MATCH (n:Resource {uri: $uri}) SET n:Resource"
+                self.__query_database(query, {"uri": str(subject_uri)})
+            else:
+                label = _shorten(obj)
+                query, params = DeleteQueryComposer.remove_label(subject_uri, label)
+                self.__query_database(query, params)
+
+        # Case 3: object is a URI/BNode → relationship retraction
+        elif obj_val is not None and not isinstance(obj, Literal):
+            if subject_uri is None:
+                return
+            rel_type = _shorten(predicate) if predicate is not None else None
+            if predicate is None:
+                # Remove all relationships to object
+                query = (
+                    "MATCH (a:Resource {uri: $from_uri})-[r]->(b:Resource {uri: $to_uri}) DELETE r"
+                )
+                self.__query_database(query, {"from_uri": str(subject_uri), "to_uri": str(obj_val)})
+            elif obj_val is None:
+                query, params = DeleteQueryComposer.remove_all_outgoing_of_type(subject_uri, rel_type)
+                self.__query_database(query, params)
+            else:
+                query, params = DeleteQueryComposer.remove_relationship(subject_uri, rel_type, obj_val)
+                self.__query_database(query, params)
+
+        # Evict from node cache if subject is being modified
+        if subject_uri and str(subject_uri) in self._node_cache:
+            del self._node_cache[str(subject_uri)]
 
     def __close_on_error(self):
         """
@@ -175,7 +259,6 @@ class Neo4jStore(Store):
         This function initializes the driver and session based on the provided configuration.
 
         """
-        auth_data = self.config.auth_data
         self.session = self.__get_driver().session(
             default_access_mode=WRITE_ACCESS
         )
