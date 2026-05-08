@@ -7,7 +7,7 @@ This library works with all types of Neo4j deployments, whether on-premise or cl
 
 ## Documentation
 
-- To get started, see the link:quickstart[Quickstart] page.
+- To get started, see the link:gettingstarted[Getting Started] page.
 - For details on the available Python classes, see the link:neo4jstore[Neo4j Store] page.
 - Example code fragments are available under link:examples[Examples].
 - If you want to contribute to this project, see link:contributing[Contributing].
