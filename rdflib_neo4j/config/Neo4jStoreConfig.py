@@ -42,6 +42,7 @@ class Neo4jStoreConfig:
             keep_lang_tag: bool = False,
             keep_custom_data_types: bool = False,
             language_filter: Optional[str] = None,
+            apply_neo4j_naming: bool = False
     ):
         self.default_prefixes = DEFAULT_PREFIXES
         self.auth_data = auth_data
@@ -59,6 +60,7 @@ class Neo4jStoreConfig:
         self.keep_lang_tag = keep_lang_tag
         self.keep_custom_data_types = keep_custom_data_types
         self.language_filter = language_filter
+        self.apply_neo4j_naming = apply_neo4j_naming
 
     def set_handle_vocab_uri_strategy(self, val: HANDLE_VOCAB_URI_STRATEGY):
         """
