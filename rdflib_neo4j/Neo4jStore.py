@@ -48,6 +48,7 @@ class Neo4jStore(Store):
         self.multival_props_predicates = config.multival_props_names
         self._dynamic_ns_map: dict = {}   # namespace_uri -> "nsN" prefix
         self._dynamic_ns_counter: list = [0]  # mutable counter (passed by ref to utils)
+        self.handle_rdf_types_strategy = config.handle_rdf_types_strategy
 
     def open(self, configuration, create=True):
         """
@@ -240,6 +241,7 @@ class Neo4jStore(Store):
         Stores the relationships of the current subject in the respective relationship buffer.
 
         This function adds the relationships of the current subject to the relationship buffer for later insertion into the Neo4j database.
+        For NODES/LABELS_AND_NODES strategies, also queues :Class node creation for rdf:type targets.
         """
         rel_types_and_relationships = self.current_subject.extract_rels()
         if self.current_subject.extract_rels():
@@ -249,6 +251,21 @@ class Neo4jStore(Store):
                 for to_node in rel_types_and_relationships[rel_type]:
                     self.rel_buffer[rel_type].add_query_param(from_node=self.current_subject.uri, to_node=to_node)
                     self.rel_buffer_size += 1
+
+        # Create :Class nodes for NODES/LABELS_AND_NODES mode
+        # Note: the rel buffer may flush before the node buffer in some cases, but
+        # RelationshipQueryComposer will MERGE the target as :Resource; the Class label
+        # is then added when the node buffer flushes — idempotent via MERGE semantics.
+        for class_uri in self.current_subject.extract_rdf_type_class_uris():
+            class_label_key = f"Class:{class_uri}"
+            if class_label_key not in self.node_buffer:
+                self.node_buffer[class_label_key] = NodeQueryComposer(
+                    labels={"Class"},
+                    handle_multival_strategy=self.handle_multival_strategy,
+                    multival_props_predicates=self.multival_props_predicates
+                )
+            self.node_buffer[class_label_key].add_query_param({"uri": class_uri})
+            self.node_buffer_size += 1
 
     def __store_current_subject(self):
         """
@@ -268,7 +285,8 @@ class Neo4jStore(Store):
                            handle_multival_strategy=self.handle_multival_strategy,
                            multival_props_names=self.multival_props_predicates,
                            dynamic_ns_map=self._dynamic_ns_map,
-                           dynamic_ns_counter=self._dynamic_ns_counter)
+                           dynamic_ns_counter=self._dynamic_ns_counter,
+                           handle_rdf_types_strategy=self.handle_rdf_types_strategy)
 
     def __check_current_subject(self, subject):
         """

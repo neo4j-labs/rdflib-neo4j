@@ -3,7 +3,7 @@ from rdflib import Namespace, URIRef
 from rdflib_neo4j.config.const import (
     DEFAULT_PREFIXES,
     PrefixNotFoundException,
-    HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
+    HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY, HandleRDFTypesStrategy
 )
 
 class Neo4jStoreConfig:
@@ -38,7 +38,8 @@ class Neo4jStoreConfig:
             batch_size=5000,
             handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN,
             handle_multival_strategy=HANDLE_MULTIVAL_STRATEGY.OVERWRITE,
-            multival_props_names: List[Tuple[str, str]] = []
+            multival_props_names: List[Tuple[str, str]] = [],
+            handle_rdf_types_strategy: HandleRDFTypesStrategy = HandleRDFTypesStrategy.LABELS
     ):
         self.default_prefixes = DEFAULT_PREFIXES
         self.auth_data = auth_data
@@ -53,6 +54,7 @@ class Neo4jStoreConfig:
         self.multival_props_names = []
         for prop_name in multival_props_names:
             self.set_multival_prop_name(prefix_name=prop_name[0], prop_name=prop_name[1])
+        self.handle_rdf_types_strategy = handle_rdf_types_strategy
 
     def set_handle_vocab_uri_strategy(self, val: HANDLE_VOCAB_URI_STRATEGY):
         """
