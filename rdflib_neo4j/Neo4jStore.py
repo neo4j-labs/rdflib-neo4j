@@ -32,6 +32,10 @@ class Neo4jStore(Store):
         elif config.auth_data:
             raise Exception("Either initialize the store with credentials or driver. You cannot do both.")
 
+        # Set named_graphs before super().__init__() because rdflib's Store.__init__
+        # calls self.open() which in turn calls __constraint_check which reads this attr.
+        self.named_graphs = config.named_graphs
+
         super(Neo4jStore, self).__init__(config.get_config_dict())
 
         self.batching = config.batching
@@ -91,16 +95,26 @@ class Neo4jStore(Store):
 
         Args:
             triple: The triple to add.
-            context: The context of the triple (default: None).
+            context: The context of the triple (default: None).  When
+                ``named_graphs=True`` in the store config, ``context`` is
+                expected to be an rdflib ``Graph`` whose ``.identifier``
+                attribute is a ``URIRef`` or ``BNode`` naming the graph.
             quoted (bool): Flag indicating whether the triple is quoted (default: False).
         """
         assert self.is_open(), "The Store must be open."
         assert context != self, "Can not add triple directly to store"
 
+        # Resolve named-graph URI when the feature is enabled
+        graph_uri = None
+        if self.named_graphs and context is not None:
+            identifier = getattr(context, "identifier", None)
+            if identifier is not None:
+                graph_uri = str(identifier)
+
         # Unpacking the triple
         (subject, predicate, object) = triple
 
-        self.__check_current_subject(subject=subject)
+        self.__check_current_subject(subject=subject, graph_uri=graph_uri)
         self.current_subject.parse_triple(triple=triple, mappings=self.mappings)
         self.total_triples += 1
 
@@ -180,19 +194,32 @@ class Neo4jStore(Store):
 
     def __constraint_check(self, create):
         """
-        Checks the existence of a uniqueness constraint on the `Resource` node with the `uri` property.
+        Checks (and optionally creates) the required schema object on :Resource.
+
+        * **Default mode** (``named_graphs=False``): requires a uniqueness constraint
+          on ``:Resource(uri)`` — the same one used by n10s triple import.
+
+        * **Named-graph mode** (``named_graphs=True``): requires only a plain index on
+          ``:Resource(uri)`` because the same URI can exist in multiple graphs as
+          separate nodes.  A uniqueness constraint would reject duplicate URIs across
+          graphs, so it must not be present.
 
         Args:
-            create (bool): Flag indicating whether to create the constraint if not found.
-
+            create (bool): Flag indicating whether to create the missing schema object.
         """
-        # Test connectivity to backend and check that constraint on :Resource(uri) is present
+        if self.named_graphs:
+            self.__index_check(create)
+        else:
+            self.__uniqueness_constraint_check(create)
+
+    def __uniqueness_constraint_check(self, create):
+        """Check / create the uniqueness constraint on :Resource(uri)."""
         constraint_check = """
-           SHOW CONSTRAINTS YIELD * 
-           WHERE type = "UNIQUENESS" 
-               AND entityType = "NODE" 
-               AND labelsOrTypes = ["Resource"] 
-               AND properties = ["uri"] 
+           SHOW CONSTRAINTS YIELD *
+           WHERE type = "UNIQUENESS"
+               AND entityType = "NODE"
+               AND labelsOrTypes = ["Resource"]
+               AND properties = ["uri"]
            RETURN COUNT(*) = 1 AS constraint_found
            """
         result = self.session.run(constraint_check)
@@ -200,7 +227,6 @@ class Neo4jStore(Store):
 
         if not constraint_found and create:
             try:
-                # Create the uniqueness constraint
                 create_constraint = """
                    CREATE CONSTRAINT n10s_unique_uri IF NOT EXISTS FOR (r:Resource) REQUIRE r.uri IS UNIQUE
                    """
@@ -210,10 +236,38 @@ class Neo4jStore(Store):
                 print("Error: Unable to create the uniqueness constraint. Make sure you have the necessary privileges.")
                 print("Exception: ", e)
         else:
-            print(f"""Uniqueness constraint on :Resource(uri) {"" if constraint_found else "not "}found. 
-               {"" if constraint_found else "Run the following command on the Neo4j DB to create the constraint: "
-                                            "CREATE CONSTRAINT n10s_unique_uri FOR (r:Resource) REQUIRE r.uri IS UNIQUE. Or provide create=True to create it."} 
-                """)
+            print(f"""Uniqueness constraint on :Resource(uri) {"" if constraint_found else "not "}found. \
+{"" if constraint_found else "Run: CREATE CONSTRAINT n10s_unique_uri FOR (r:Resource) REQUIRE r.uri IS UNIQUE, or pass create=True."}\
+""")
+
+    def __index_check(self, create):
+        """Check / create a plain index on :Resource(uri) (required for named-graph mode)."""
+        index_check = """
+           SHOW INDEXES YIELD *
+           WHERE type = "RANGE"
+               AND entityType = "NODE"
+               AND labelsOrTypes = ["Resource"]
+               AND properties = ["uri"]
+           RETURN COUNT(*) >= 1 AS index_found
+           """
+        result = self.session.run(index_check)
+        index_found = next((True for x in result if x["index_found"]), False)
+
+        if not index_found and create:
+            try:
+                self.session.run(
+                    "CREATE INDEX n10s_resource_uri IF NOT EXISTS FOR (r:Resource) ON (r.uri)"
+                )
+                print("Index on :Resource(uri) is created (named-graph mode).")
+            except Exception as e:
+                print("Error: Unable to create the index on :Resource(uri).")
+                print("Exception: ", e)
+        else:
+            print(
+                f"Index on :Resource(uri) {'found' if index_found else 'not found'} "
+                f"(named-graph mode)."
+                + ("" if index_found else " Run: CREATE INDEX n10s_resource_uri FOR (r:Resource) ON (r.uri), or pass create=True.")
+            )
 
     def __store_current_subject_props(self):
         """
@@ -222,10 +276,17 @@ class Neo4jStore(Store):
         This function adds the properties of the current subject to the node buffer for later insertion into the Neo4j database.
         """
         label_key = self.current_subject.extract_label_key()
+        # When named_graphs is active, each (labels, graphUri) combination needs its
+        # own NodeQueryComposer so that the MERGE key is consistent within a batch.
+        if self.named_graphs and self.current_subject.graph_uri is not None:
+            label_key = f"{label_key}|{self.current_subject.graph_uri}"
         if label_key not in self.node_buffer:
-            self.node_buffer[label_key] = NodeQueryComposer(labels=self.current_subject.labels,
-                                                            handle_multival_strategy=self.handle_multival_strategy,
-                                                            multival_props_predicates=self.multival_props_predicates)
+            self.node_buffer[label_key] = NodeQueryComposer(
+                labels=self.current_subject.labels,
+                handle_multival_strategy=self.handle_multival_strategy,
+                multival_props_predicates=self.multival_props_predicates,
+                graph_uri_aware=self.named_graphs,
+            )
 
         self.node_buffer[label_key].add_props(self.current_subject.extract_props_names())
         self.node_buffer[label_key].add_props(self.current_subject.extract_props_names(multi=True), multi=True)
@@ -241,11 +302,19 @@ class Neo4jStore(Store):
         """
         rel_types_and_relationships = self.current_subject.extract_rels()
         if self.current_subject.extract_rels():
+            graph_uri = self.current_subject.graph_uri if self.named_graphs else None
             for rel_type in rel_types_and_relationships:
                 if rel_type not in self.rel_buffer:
-                    self.rel_buffer[rel_type] = RelationshipQueryComposer(rel_type)
+                    self.rel_buffer[rel_type] = RelationshipQueryComposer(
+                        rel_type,
+                        graph_uri_aware=self.named_graphs,
+                    )
                 for to_node in rel_types_and_relationships[rel_type]:
-                    self.rel_buffer[rel_type].add_query_param(from_node=self.current_subject.uri, to_node=to_node)
+                    self.rel_buffer[rel_type].add_query_param(
+                        from_node=self.current_subject.uri,
+                        to_node=to_node,
+                        graph_uri=graph_uri,
+                    )
                     self.rel_buffer_size += 1
 
     def __store_current_subject(self):
@@ -257,7 +326,7 @@ class Neo4jStore(Store):
         self.__store_current_subject_props()
         self.__store_current_subject_rels()
 
-    def __create_current_subject(self, subject):
+    def __create_current_subject(self, subject, graph_uri=None):
         return Neo4jTriple(
             uri=subject,
             prefixes={value: key for key, value in self.config.get_prefixes().items()},
@@ -268,9 +337,10 @@ class Neo4jStore(Store):
             keep_lang_tag=self.config.keep_lang_tag,
             keep_custom_data_types=self.config.keep_custom_data_types,
             language_filter=self.config.language_filter,
+            graph_uri=graph_uri,
         )
 
-    def __check_current_subject(self, subject):
+    def __check_current_subject(self, subject, graph_uri=None):
         """
         Checks the current subject and stores the previous subject if it has changed.
 
@@ -279,20 +349,26 @@ class Neo4jStore(Store):
 
         Args:
             subject: The subject to check.
+            graph_uri: Optional named-graph URI string for the current triple.
         """
         if self.current_subject is None:
-            self.current_subject = self.__create_current_subject(subject)
+            self.current_subject = self.__create_current_subject(subject, graph_uri)
         else:
-            if self.current_subject.uri != subject:
+            # A new subject or a new graph context forces a flush of the previous subject
+            if self.current_subject.uri != subject or self.current_subject.graph_uri != graph_uri:
                 self.__store_current_subject()
-                self.current_subject = self.__create_current_subject(subject)
+                self.current_subject = self.__create_current_subject(subject, graph_uri)
 
-    def triples(self, triple):
+    def triples(self, triple, context=None):
         """
         Yield triples matching the pattern. Any component may be None (wildcard).
 
         Args:
             triple: A (subject, predicate, object) tuple; any element may be None.
+            context: Optional graph context.  When ``named_graphs=True`` in the store
+                config, passing a graph object here restricts results to triples that
+                were stored under the named graph identified by
+                ``context.identifier``.
 
         Yields:
             ((subject, predicate, object), self) tuples, matching the rdflib
@@ -303,6 +379,14 @@ class Neo4jStore(Store):
         from rdflib_neo4j.expander import expand_uri, neo4j_value_to_literal
 
         (s, p, o) = triple
+
+        # Resolve named-graph filter when the feature is enabled
+        graph_uri = None
+        if self.named_graphs and context is not None:
+            identifier = getattr(context, "identifier", None)
+            if identifier is not None:
+                graph_uri = str(identifier)
+
         prefix_map = {name: str(ns) for name, ns in self.config.get_prefixes().items()}
 
         # Yield property and label triples from a node record
@@ -315,9 +399,9 @@ class Neo4jStore(Store):
             props = record["props"]
             labels = record["extra_labels"]
 
-            # Property triples
+            # Property triples (skip internal Neo4j bookkeeping keys)
             for prop_key, prop_val in props.items():
-                if prop_key == "uri":
+                if prop_key in ("uri", "graphUri"):
                     continue
                 predicate = expand_uri(prop_key, prefix_map)
                 if p is not None and predicate != p:
@@ -355,27 +439,47 @@ class Neo4jStore(Store):
         if s is not None:
             # Subject known — query specific node
             s_uri = f"bnode://{s}" if isinstance(s, BNode) else str(s)
+            run_kwargs = {"uri": s_uri}
+            if graph_uri is not None:
+                run_kwargs["graphUri"] = graph_uri
             node_result = self.session.run(
-                ExportQueryComposer.node_by_uri_query(), uri=s_uri
+                ExportQueryComposer.node_by_uri_query(graph_uri=graph_uri),
+                **run_kwargs,
             )
             for record in node_result:
                 yield from _node_triples(record)
             # Only fetch relationships when predicate is not rdf:type and object
             # is not a Literal (relationships link Resource nodes only)
             if p != RDF.type and not isinstance(o, Literal):
+                rel_kwargs = {"uri": s_uri}
+                if graph_uri is not None:
+                    rel_kwargs["graphUri"] = graph_uri
                 rel_result = self.session.run(
-                    ExportQueryComposer.relationships_from_uri_query(), uri=s_uri
+                    ExportQueryComposer.relationships_from_uri_query(graph_uri=graph_uri),
+                    **rel_kwargs,
                 )
                 for record in rel_result:
                     yield from _rel_triples(record)
         else:
             # Subject wildcard — scan all nodes
-            node_result = self.session.run(ExportQueryComposer.all_nodes_query())
+            node_kwargs = {}
+            if graph_uri is not None:
+                node_kwargs["graphUri"] = graph_uri
+            node_result = self.session.run(
+                ExportQueryComposer.all_nodes_query(graph_uri=graph_uri),
+                **node_kwargs,
+            )
             for record in node_result:
                 yield from _node_triples(record)
             # Fetch relationships unless we know only Literal objects are wanted
             if not isinstance(o, Literal):
-                rel_result = self.session.run(ExportQueryComposer.all_relationships_query())
+                rel_kwargs = {}
+                if graph_uri is not None:
+                    rel_kwargs["graphUri"] = graph_uri
+                rel_result = self.session.run(
+                    ExportQueryComposer.all_relationships_query(graph_uri=graph_uri),
+                    **rel_kwargs,
+                )
                 for record in rel_result:
                     yield from _rel_triples(record)
 

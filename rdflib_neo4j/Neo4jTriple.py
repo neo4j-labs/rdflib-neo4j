@@ -27,7 +27,8 @@ class Neo4jTriple:
                  prefixes: Dict[str, str],
                  keep_lang_tag: bool = False,
                  keep_custom_data_types: bool = False,
-                 language_filter: Optional[str] = None):
+                 language_filter: Optional[str] = None,
+                 graph_uri: Optional[str] = None):
         """
         Constructor for Neo4jTriple.
 
@@ -37,6 +38,9 @@ class Neo4jTriple:
             handle_multival_strategy: The strategy to handle multiple values.
             multival_props_names: A list containing URIs to be treated as multivalued.
             prefixes: A dictionary of namespace prefixes used for vocabulary URI handling.
+            graph_uri: Optional named graph URI string; when set, stored as the ``graphUri``
+                property on the Neo4j node so that the same resource URI in different named
+                graphs is kept as a distinct node (n10s quad semantics).
         """
         self.uri = uri
         self.labels = set()
@@ -50,6 +54,7 @@ class Neo4jTriple:
         self.keep_lang_tag = keep_lang_tag
         self.keep_custom_data_types = keep_custom_data_types
         self.language_filter = language_filter
+        self.graph_uri = graph_uri
 
     def add_label(self, label: str):
         """
@@ -108,11 +113,15 @@ class Neo4jTriple:
         Extracts the properties from the `props` dictionary of the Neo4jTriple object.
 
         Returns:
-            dict: The extracted properties.
+            dict: The extracted properties. When ``graph_uri`` is set on this triple,
+            the dict also contains a ``graphUri`` key so that the Cypher query can
+            MERGE on both ``uri`` and ``graphUri``.
         """
         res = {key: value for key, value in self.props.items()}
         res["uri"] = self.uri
         res.update(self.multi_props)
+        if self.graph_uri is not None:
+            res["graphUri"] = self.graph_uri
         return res
 
     def extract_props_names(self, multi=False):
