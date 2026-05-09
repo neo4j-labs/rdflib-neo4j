@@ -1,0 +1,78 @@
+= Graph Iteration and Export
+
+This page describes how to iterate over triples stored in Neo4j, count them, and serialize an RDF graph — using the standard rdflib `Graph` API backed by `Neo4jStore`.
+
+The `Neo4jStore` implements three rdflib `Store` protocol methods that unlock these capabilities:
+
+* `triples(pattern)` — yield triples matching a `(subject, predicate, object)` pattern, with `None` as a wildcard
+* `__len__()` — return the triple count
+* `__iter__()` — iterate over every triple in the store
+
+These are called transparently by the `rdflib.Graph` API, so you use the familiar rdflib interface without writing any Cypher directly.
+
+== What these methods enable
+
+Once a graph is open against a Neo4j store, you can:
+
+* Count the stored triples with `len(g)`
+* Iterate every triple with `for s, p, o in g:`
+* Filter by subject, predicate, or object with `g.triples(pattern)`
+* Serialize the full graph back to any RDF format supported by rdflib (Turtle, N-Triples, JSON-LD, …)
+* Run SPARQL queries against the store using `g.query()`
+
+Neo4j label nodes are automatically surfaced as `rdf:type` triples, so round-trips between RDF and the graph model preserve class membership.
+
+== Code examples
+
+The examples below assume a configured graph `g` — see xref:gettingstarted.adoc[Getting Started] for store setup.
+
+[source,python]
+----
+from rdflib.namespace import RDF
+
+# Count all triples in the store
+print(len(g))
+
+# Iterate over every triple
+for s, p, o in g:
+    print(s, p, o)
+
+# Pattern matching — find all rdf:type triples (subject and object are wildcards)
+for s, p, o in g.triples((None, RDF.type, None)):
+    print(s, "is a", o)
+
+# Serialize the full graph back to Turtle
+print(g.serialize(format="turtle"))
+----
+
+=== Pattern matching details
+
+`g.triples(pattern)` accepts any combination of `None` wildcards:
+
+[cols="1,1,1,2",options="header"]
+|===
+| Subject | Predicate | Object | What is matched
+
+| `None` | `None` | `None` | Every triple in the store
+| `uri` | `None` | `None` | All triples with the given subject
+| `None` | `RDF.type` | `None` | All `rdf:type` triples
+| `uri` | `pred` | `None` | All values for a given subject and predicate
+| `None` | `None` | `literal` | All triples with a given object value
+|===
+
+Any non-`None` position is used as an exact filter.  All seven remaining wildcard combinations are supported.
+
+== Performance considerations
+
+`triples()`, `__len__()`, and `__iter__()` all perform full or partial graph scans in Neo4j:
+
+* `__len__()` runs a count query that sums property-value triples, label-to-`rdf:type` triples, and relationships.  The count is *approximate* when multi-valued properties are stored as arrays — each array element is a separate RDF triple, but the count query tallies the property once.
+* `__iter__()` and unbounded `triples((None, None, None))` fetch every node and every relationship from the database.
+
+These operations are well-suited for:
+
+* Exporting or serializing a small-to-medium graph
+* One-time round-trip verification after an import
+* Development and debugging
+
+Avoid calling them in tight loops or on large graphs where only a subset of triples is needed.  For selective queries, use SPARQL via `g.query()` or the Neo4j driver directly — both let you push filters into the database.
