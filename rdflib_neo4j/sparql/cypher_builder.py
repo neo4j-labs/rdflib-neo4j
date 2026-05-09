@@ -1194,17 +1194,24 @@ class CypherQuery:
 
         return sep, body, other_params
 
-    def render(self) -> tuple[str, dict[str, Any]]:
-        """Return ``(cypher_string, params_dict)``.  Idempotent."""
+    def render(self, *, cypher_version_prefix: bool = True) -> tuple[str, dict[str, Any]]:
+        """Return ``(cypher_string, params_dict)``.  Idempotent.
+
+        Pass ``cypher_version_prefix=False`` to omit the ``CYPHER 25`` version annotation,
+        e.g. when the caller needs the bare query body for test assertions.
+        """
         parts, params = self._render_parts(param_offset=0)
+        if not cypher_version_prefix and parts and parts[0] == "CYPHER 25":
+            parts = parts[1:]
         cypher = "\n".join(parts)
 
         if self._union:
             sep, body, other_params = self._render_union_tail(self._root._param_counter)
-            return cypher + "\n" + sep + "\n" + body, {**params, **other_params}
+            full = cypher + "\n" + sep + "\n" + body
+            return full, {**params, **other_params}
 
         return cypher, params
 
-    def render_str(self) -> str:
+    def render_str(self, *, cypher_version_prefix: bool = True) -> str:
         """Return only the Cypher string (params discarded)."""
-        return self.render()[0]
+        return self.render(cypher_version_prefix=cypher_version_prefix)[0]
