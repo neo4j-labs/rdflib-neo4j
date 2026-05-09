@@ -1,5 +1,7 @@
 = Named Graph / Quad Support
 
+link:https://colab.research.google.com/github/neo4j-labs/rdflib-neo4j/blob/main/notebooks/named_graphs_demo.ipynb[image:https://colab.research.google.com/assets/colab-badge.svg[Open In Colab]]
+
 RDF triples can be grouped into *named graphs*, turning them into *quads*: a four-element tuple of `(subject, predicate, object, graphURI)`.
 Named graphs let you track the provenance of data, partition a dataset by source or version, and query subsets of a larger store.
 
