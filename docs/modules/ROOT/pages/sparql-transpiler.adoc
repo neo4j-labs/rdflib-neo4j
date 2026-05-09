@@ -1,4 +1,7 @@
 = SPARQL-to-Cypher Transpiler
+
+link:https://colab.research.google.com/github/neo4j-labs/rdflib-neo4j/blob/main/notebooks/sparql_transpiler_demo.ipynb[image:https://colab.research.google.com/assets/colab-badge.svg[Open In Colab]]
+
 [.procedures, opts=header]
 
 The SPARQL-to-Cypher transpiler converts SPARQL SELECT queries into Cypher 25
