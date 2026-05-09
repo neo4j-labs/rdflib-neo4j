@@ -57,7 +57,7 @@ class CypherMultipleTypesMultiValueException(Exception):
         super().__init__()
 
     def __str__(self):
-        return f"""Values of a multivalued property must have the same datatype."""
+        return """Values of a multivalued property must have the same datatype."""
 
 NEO4J_DRIVER_MULTIPLE_TYPE_ERROR_MESSAGE = """{code: Neo.ClientError.Statement.TypeError} {message: Neo4j only supports a subset of Cypher types for storage as singleton or array properties. Please refer to section cypher/syntax/values of the manual for more details.}"""
 NEO4J_DRIVER_DICT_MESSAGE = {NEO4J_DRIVER_MULTIPLE_TYPE_ERROR_MESSAGE: CypherMultipleTypesMultiValueException}

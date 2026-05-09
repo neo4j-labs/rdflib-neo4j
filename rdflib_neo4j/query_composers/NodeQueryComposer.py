@@ -17,12 +17,16 @@ class NodeQueryComposer:
     props: Set[str] = set()
     query_params: List[Dict]
 
-    def __init__(self, labels, handle_multival_strategy, multival_props_predicates):
+    def __init__(self, labels, handle_multival_strategy, multival_props_predicates,
+                 graph_uri_aware: bool = False):
         """
         Initializes a NodeQueryComposer object.
 
         Args:
             labels: The labels to assign to the nodes.
+            graph_uri_aware: When True the MERGE clause matches on both ``uri`` and
+                ``graphUri``, so the same resource URI in different named graphs
+                produces separate Neo4j nodes (n10s quad semantics).
         """
         self.labels = labels
         self.props = set()
@@ -30,6 +34,7 @@ class NodeQueryComposer:
         self.query_params = []
         self.handle_multival_strategy = handle_multival_strategy
         self.multival_props_predicates = multival_props_predicates
+        self.graph_uri_aware = graph_uri_aware
 
     def add_props(self, props, multi=False):
         """
@@ -57,11 +62,21 @@ class NodeQueryComposer:
         """
         Writes the Neo4j query for creating nodes with labels and properties.
 
+        When ``graph_uri_aware`` is True the MERGE matches on both ``uri`` and
+        ``graphUri`` so that the same resource URI in different named graphs is
+        stored as separate nodes, mirroring n10s quad-import semantics.
+
         Returns:
             str: The Neo4j query.
         """
-
-        q = f''' UNWIND $params as param MERGE (n:Resource{{ uri : param["uri"] }}) '''
+        if self.graph_uri_aware:
+            q = (
+                ' UNWIND $params as param'
+                ' MERGE (n:Resource{ uri : param["uri"], graphUri : param["graphUri"] })'
+                ' '
+            )
+        else:
+            q = ' UNWIND $params as param MERGE (n:Resource{ uri : param["uri"] }) '
         if self.labels:
             q += f'''SET {', '.join([f"""n:`{label}`""" for label in self.labels])} '''
         if self.props or self.multi_props:

@@ -27,6 +27,11 @@ class Neo4jStoreConfig:
     - handle_multival_strategy: The strategy to handle multivalued properties (default: HANDLE_MULTIVAL_STRATEGY.OVERWRITE).
 
     - multival_props_names: A list of tuples containing the prefix and property names to be treated as multivalued in the form (prefix, property_name)
+
+    - named_graphs: When True, enable named graph (quad) support. Each triple is stored with a ``graphUri``
+      property derived from the RDF context identifier. The same resource URI in different named graphs
+      becomes separate Neo4j nodes, matching n10s quad-import semantics. The store then requires a plain
+      index on ``:Resource(uri)`` instead of a uniqueness constraint. Default: False.
     """
 
     def __init__(
@@ -42,6 +47,7 @@ class Neo4jStoreConfig:
             keep_lang_tag: bool = False,
             keep_custom_data_types: bool = False,
             language_filter: Optional[str] = None,
+            named_graphs: bool = False,
     ):
         self.default_prefixes = DEFAULT_PREFIXES
         self.auth_data = auth_data
@@ -59,6 +65,7 @@ class Neo4jStoreConfig:
         self.keep_lang_tag = keep_lang_tag
         self.keep_custom_data_types = keep_custom_data_types
         self.language_filter = language_filter
+        self.named_graphs = named_graphs
 
     def set_handle_vocab_uri_strategy(self, val: HANDLE_VOCAB_URI_STRATEGY):
         """
