@@ -1,0 +1,242 @@
+= Named Graph / Quad Support
+
+RDF triples can be grouped into *named graphs*, turning them into *quads*: a four-element tuple of `(subject, predicate, object, graphURI)`.
+Named graphs let you track the provenance of data, partition a dataset by source or version, and query subsets of a larger store.
+
+Quad-capable RDF serialisation formats include:
+
+* **TriG** (`.trig`) — Turtle extended with named graph blocks
+* **N-Quads** (`.nq`) — newline-delimited quads, one per line
+
+== Enabling named graph support
+
+By default, `Neo4jStore` operates in *plain triple* mode — the graph context is ignored and the database enforces a uniqueness constraint on `:Resource(uri)`.
+
+To enable named graph (quad) support, pass `named_graphs=True` to `Neo4jStoreConfig`:
+
+[source,python]
+----
+from rdflib import ConjunctiveGraph, URIRef
+from rdflib_neo4j import Neo4jStoreConfig, Neo4jStore, HANDLE_VOCAB_URI_STRATEGY
+
+auth_data = {
+    "uri": "neo4j+s://your-instance.databases.neo4j.io",
+    "database": "neo4j",
+    "user": "neo4j",
+    "pwd": "your-password",
+}
+
+config = Neo4jStoreConfig(
+    auth_data=auth_data,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+    batching=True,
+    named_graphs=True,          # <1>
+)
+
+# Use ConjunctiveGraph to hold quads
+store = Neo4jStore(config=config)
+g = ConjunctiveGraph(store=store)  # <2>
+
+# parse a TriG file — each named graph in the file maps to a separate context
+g.parse("data.trig", format="trig")
+g.close(True)
+----
+<1> Set `named_graphs=True` in the config.
+<2> Use `rdflib.ConjunctiveGraph` (or `rdflib.Dataset`) instead of plain `Graph`.
+
+=== Loading N-Quads
+
+N-Quads files are loaded the same way:
+
+[source,python]
+----
+g.parse("data.nq", format="nquads")
+g.close(True)
+----
+
+=== Inline example: loading quads from a TriG string
+
+[source,python]
+----
+from rdflib import ConjunctiveGraph, URIRef
+from rdflib_neo4j import Neo4jStoreConfig, Neo4jStore, HANDLE_VOCAB_URI_STRATEGY
+
+TRIG_DATA = """\
+@prefix ex: <http://example.org/> .
+
+GRAPH ex:graph1 {
+    ex:alice a ex:Person ;
+             ex:name "Alice" .
+}
+
+GRAPH ex:graph2 {
+    ex:bob a ex:Person ;
+           ex:name "Bob" .
+}
+"""
+
+config = Neo4jStoreConfig(
+    auth_data=auth_data,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+    batching=True,
+    named_graphs=True,
+)
+
+store = Neo4jStore(config=config)
+g = ConjunctiveGraph(store=store)
+g.parse(data=TRIG_DATA, format="trig")
+g.close(True)
+----
+
+After loading, the Neo4j database contains *two separate* `:Resource` nodes for `ex:alice` and `ex:bob`, each carrying a `graphUri` property that identifies which named graph it came from.
+
+== How graph URIs are stored in Neo4j
+
+When `named_graphs=True`, every node and relationship written to Neo4j carries a `graphUri` string property whose value is the URI of the named graph it belongs to.
+
+The same resource URI appearing in *different* named graphs becomes *separate nodes* in Neo4j — matching n10s ContextResource / quad-import semantics.
+
+Example Neo4j node after import:
+
+[source,json]
+----
+{
+  "uri": "http://example.org/alice",
+  "name": "Alice",
+  "graphUri": "http://example.org/graph1"
+}
+----
+
+Relationships carry the same property:
+
+[source,json]
+----
+{
+  "type": "knows",
+  "graphUri": "http://example.org/graph1"
+}
+----
+
+== Schema: index instead of uniqueness constraint
+
+In default mode, `Neo4jStore` requires a uniqueness constraint on `:Resource(uri)`, because each URI maps to exactly one node.
+In named-graph mode the same URI can exist as multiple nodes (one per graph), so a uniqueness constraint would reject valid data.
+
+When `named_graphs=True`, the store creates a plain RANGE index instead:
+
+[source,cypher]
+----
+CREATE INDEX n10s_resource_uri IF NOT EXISTS FOR (r:Resource) ON (r.uri)
+----
+
+This index is created automatically when you pass `create=True` (the default) to `store.open()`.
+To create it manually:
+
+[source,cypher]
+----
+CREATE INDEX n10s_resource_uri IF NOT EXISTS FOR (r:Resource) ON (r.uri)
+----
+
+== Querying by named graph with Cypher
+
+Because `graphUri` is stored as a plain string property, filtering by named graph in Cypher uses standard property matching.
+
+=== Find all nodes in a specific named graph
+
+[source,cypher]
+----
+MATCH (n {graphUri: "http://example.org/graph1"})
+RETURN n
+----
+
+=== Find all nodes and relationships in a specific named graph
+
+[source,cypher]
+----
+MATCH (s)-[r]->(o)
+WHERE s.graphUri = "http://example.org/graph1"
+  AND r.graphUri = "http://example.org/graph1"
+RETURN s, r, o
+----
+
+=== Parameterised query (recommended)
+
+[source,cypher]
+----
+MATCH (n {graphUri: $graphUri})
+RETURN n
+----
+
+=== List all distinct named graphs
+
+[source,cypher]
+----
+MATCH (n:Resource)
+WHERE n.graphUri IS NOT NULL
+RETURN DISTINCT n.graphUri AS graph
+----
+
+== Filtering with `triples()`
+
+`Neo4jStore.triples()` accepts an optional `context` argument.
+When `named_graphs=True`, passing a graph object restricts results to triples stored in that named graph:
+
+[source,python]
+----
+from rdflib import Graph, URIRef
+
+# Retrieve only triples that belong to graph1
+graph1 = Graph(identifier=URIRef("http://example.org/graph1"))
+for triple, _ in store.triples((None, None, None), context=graph1):
+    print(triple)
+----
+
+== Graph vs ConjunctiveGraph: which to use
+
+[cols="1,1,2", options="header"]
+|===
+| Class | `named_graphs` setting | Behaviour
+
+| `rdflib.Graph`
+| `False` (default)
+| Plain triple store. Each URI maps to one node. Uniqueness constraint on `:Resource(uri)`. Context passed to `add()` is ignored.
+
+| `rdflib.ConjunctiveGraph` / `rdflib.Dataset`
+| `True`
+| Quad store. Same URI in different graphs = separate nodes. Plain RANGE index on `:Resource(uri)`. Each node/relationship carries `graphUri`.
+|===
+
+== Warning: switching modes on an existing database
+
+[CAUTION]
+====
+Switching a database between `named_graphs=False` and `named_graphs=True` (or vice versa) requires a **full re-import**. You cannot mix the two modes in the same database.
+
+**Why:**
+
+* Default mode requires a *uniqueness constraint* on `:Resource(uri)`.
+  Named-graph mode requires that constraint to be *absent* (duplicate URIs across graphs are valid) and instead needs a plain RANGE index.
+  These two schema objects are incompatible.
+
+* Nodes imported without a `graphUri` property will **not** be returned by graph-filtered queries such as `MATCH (n {graphUri: "..."})`.
+
+**Migration procedure:**
+
+1. Drop the existing uniqueness constraint:
++
+[source,cypher]
+----
+DROP CONSTRAINT n10s_unique_uri IF EXISTS
+----
+
+2. Create the RANGE index:
++
+[source,cypher]
+----
+CREATE INDEX n10s_resource_uri IF NOT EXISTS FOR (r:Resource) ON (r.uri)
+----
+
+3. Delete all existing `:Resource` nodes (they lack `graphUri` and are incompatible with quad semantics).
+
+4. Re-import all data with `named_graphs=True`.
+====
