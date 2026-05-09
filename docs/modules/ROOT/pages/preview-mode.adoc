@@ -1,0 +1,103 @@
+= Preview / Dry-Run Mode
+[.procedures, opts=header]
+
+Preview mode lets you inspect the Cypher queries that _would_ be sent to Neo4j during an RDF import—without actually executing them.
+This is useful for testing, debugging, and CI pipelines where a live database is not available or where you want to validate generated queries before running a real import.
+
+== How it works
+
+When `preview=True` is set on `Neo4jStoreConfig`, the store intercepts every Cypher write query and appends a `(query, params)` tuple to an in-memory buffer instead of sending it to Neo4j.
+The buffer is accessible via `Neo4jStore.get_preview_results()` and can be cleared with `Neo4jStore.clear_preview_results()`.
+
+NOTE: The store still requires valid credentials or a driver so that it can open a session and perform the uniqueness constraint check.
+No data is written to the database in preview mode.
+If the required `Resource(uri)` uniqueness constraint is missing, a warning is printed and constraint creation is skipped rather than executed against Neo4j.
+
+== Configuration parameter
+
+|===
+| Name | Type | Required | Default | Description
+| preview | Boolean | False | False | When `True`, Cypher write queries are captured in memory instead of being executed against Neo4j.
+|===
+
+== Usage example
+
+[source,python]
+----
+from rdflib import Graph
+from rdflib_neo4j import Neo4jStoreConfig, Neo4jStore
+
+auth_data = {
+    "uri": "bolt://localhost:7687",
+    "database": "neo4j",
+    "user": "neo4j",
+    "pwd": "password",
+}
+
+TURTLE_DATA = """
+@prefix ex: <http://example.org/> .
+ex:Alice a ex:Person ;
+         ex:name "Alice" .
+ex:Bob   a ex:Person ;
+         ex:name "Bob" .
+ex:Alice ex:knows ex:Bob .
+"""
+
+# Enable preview mode in the config
+config = Neo4jStoreConfig(auth_data=auth_data, preview=True)
+
+# Create the store and attach it to an rdflib Graph
+store = Neo4jStore(config=config)
+g = Graph(store=store)
+
+# Parse RDF data — Cypher queries are collected, not sent to Neo4j
+g.parse(data=TURTLE_DATA, format="ttl")
+
+# Inspect every (query, params) pair that would have been executed
+for query, params in store.get_preview_results():
+    print(query)
+    print(params)
+    print()
+
+# Clear the buffer to reset state between parse operations
+store.clear_preview_results()
+----
+
+== API reference
+
+=== get_preview_results
+
+Returns a copy of the list of `(query, params)` tuples collected during the import.
+Calling this method when `preview=False` always returns an empty list.
+
+==== Output
+
+|===
+| Type | Description
+| List[Tuple[str, dict]] | A list of `(cypher_query, parameters)` pairs in the order they would have been sent to Neo4j.
+|===
+
+=== clear_preview_results
+
+Clears the internal preview buffer.
+Use this to reset state between multiple parse operations within the same store instance.
+
+==== Arguments
+
+No arguments.
+
+== Use cases
+
+Testing without a live database::
+  Unit-test your RDF-to-graph mapping logic by asserting on the generated Cypher queries instead of querying a running Neo4j instance.
+  The test suite uses `unittest.mock` to patch the Neo4j driver so no real connection is needed.
+
+CI/CD validation::
+  Run imports in preview mode in a continuous integration pipeline to catch mapping errors or unexpected query shapes without provisioning a database.
+
+Debugging imports::
+  Inspect the exact Cypher that will be executed before committing to a real write operation.
+  This is especially helpful when diagnosing issues with custom mappings, multi-valued properties, or vocabulary URI strategies.
+
+Query auditing::
+  Log or diff the generated Cypher queries between versions of your RDF data to detect unintended changes in the resulting graph structure.

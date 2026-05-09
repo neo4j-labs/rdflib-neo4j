@@ -2,5 +2,6 @@
 * xref:gettingstarted.adoc[Getting Started]
 * xref:neo4jstore.adoc[Neo4j Store]
 * xref:neo4jstoreconfig.adoc[Store Configuration]
+* xref:preview-mode.adoc[Preview / Dry-Run Mode]
 * xref:examples.adoc[Examples]
 * xref:contributing.adoc[Contributing]
