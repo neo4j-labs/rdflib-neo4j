@@ -38,7 +38,7 @@ def _translate(sparql: str) -> tuple[str, dict]:
 
 def cypher_of(sparql: str) -> str:
     cypher, _ = _translate(sparql)
-    # strip the CYPHER 25 header for easier assertions
+    # drop the CYPHER 25 header line for cleaner assertion strings
     lines = cypher.splitlines()
     body = "\n".join(l for l in lines if l != "CYPHER 25")
     return body.strip()
