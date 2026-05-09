@@ -1,0 +1,101 @@
+= In-Process Node Cache
+[.procedures, opts=header]
+
+During RDF ingestion, the same subject URI often appears many times across triples — once per predicate.
+Without a cache, `Neo4jStore` issues a `MERGE` query to Neo4j for every occurrence, even when the node was already written in the same session.
+The in-process node cache eliminates those redundant round-trips by tracking which URIs have already been seen.
+
+== How It Works
+
+The cache is a dict-based LRU structure held in memory for the lifetime of a single `Neo4jStore` session.
+
+* When a subject URI is encountered for the first time, the node is written to Neo4j and the URI is added to the cache.
+* On subsequent encounters of the same URI, the node's properties are still merged into the write buffer (so additional predicates are not lost), but the URI is not re-added to the cache and no extra `MERGE` round-trip is issued for the initial node creation.
+* Relationships are **never** skipped — every relationship triple is always written regardless of whether the subject node is cached.
+
+=== Eviction
+
+The cache uses insertion-order eviction (Python 3.7+ `dict` guarantees insertion order).
+When the number of cached URIs exceeds `node_cache_size`, the oldest entry is removed to keep memory usage bounded.
+
+== Configuration
+
+The cache is enabled by default with a limit of **10,000 entries**.
+Control it via the `node_cache_size` parameter of `Neo4jStoreConfig`:
+
+|===
+| Parameter | Type | Default | Description
+| node_cache_size | Integer | 10000 | Maximum number of node URIs to hold in the in-process cache. Set to `0` to disable the cache entirely.
+|===
+
+== Usage Example
+
+[source,python]
+----
+from rdflib import Graph, URIRef, Literal
+from rdflib.namespace import FOAF
+from rdflib_neo4j import Neo4jStoreConfig, Neo4jStore, HANDLE_VOCAB_URI_STRATEGY
+
+auth_data = {
+    "uri": "bolt://localhost:7687",
+    "database": "neo4j",
+    "user": "neo4j",
+    "pwd": "password",
+}
+
+# Default: cache up to 10,000 node URIs (recommended for most workloads)
+config = Neo4jStoreConfig(
+    auth_data=auth_data,
+    node_cache_size=10000,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+    batching=True,
+)
+
+# Larger cache for datasets with many distinct subjects
+config_large = Neo4jStoreConfig(
+    auth_data=auth_data,
+    node_cache_size=100000,
+)
+
+# Disable the cache entirely (every occurrence issues a full MERGE)
+config_no_cache = Neo4jStoreConfig(
+    auth_data=auth_data,
+    node_cache_size=0,
+)
+
+store = Neo4jStore(config=config)
+graph = Graph(store=store)
+graph.open(config, create=True)
+
+graph.add((URIRef("https://example.org/alice"), FOAF.name, Literal("Alice")))
+graph.add((URIRef("https://example.org/alice"), FOAF.age,  Literal(30)))
+# "alice" is cached after the first encounter — no extra MERGE on the second triple.
+
+graph.close()
+----
+
+== Performance Implications
+
+=== When the cache helps
+
+* **RDF files where subjects repeat** — any dataset where triples are grouped by predicate rather than subject will have the same URI appear many times.
+  The cache converts O(n) `MERGE` calls into O(1) per unique URI.
+* **Large imports** — the benefit grows with dataset size.
+  A 1 M-triple file with 100 K distinct subjects could reduce node `MERGE` queries by 90 % or more.
+
+=== Memory trade-off
+
+Each cache entry stores one URI string.
+At 10,000 entries and an average URI length of ~50 characters, the overhead is roughly 500 KB — negligible for most JVM and Python processes.
+Increase `node_cache_size` for very large datasets with many distinct subjects; decrease it if memory is constrained.
+
+=== When to disable the cache
+
+Set `node_cache_size=0` if:
+
+* You need fully deterministic `MERGE` behaviour regardless of visit order (e.g., during testing or auditing).
+* Your dataset has very few repeated subjects and you want to avoid the dict overhead entirely.
+* You are running many short-lived store sessions in a memory-sensitive environment.
+
+NOTE: Disabling the cache does **not** affect correctness — all nodes and relationships are still written.
+It only affects the number of `MERGE` queries issued to Neo4j.
