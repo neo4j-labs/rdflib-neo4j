@@ -1,5 +1,7 @@
 = Cypher 25 DSL
 
+link:https://colab.research.google.com/github/neo4j-labs/rdflib-neo4j/blob/main/notebooks/cypher_dsl_demo.ipynb[image:https://colab.research.google.com/assets/colab-badge.svg[Open In Colab]]
+
 `rdflib_neo4j/sparql/cypher_builder.py` is a typed Python builder for Cypher 25 queries.
 It is **internal infrastructure** — consumed by the SPARQL-to-Cypher transpiler (upcoming PR) and not part of the public rdflib-neo4j API.
 
