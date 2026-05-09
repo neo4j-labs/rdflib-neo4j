@@ -125,12 +125,15 @@ class Transpiler:
 
     # ── Public entry points ─────────────────────────────────────────────────
 
-    def translate_algebra(self, algebra: CompValue) -> tuple[str, dict]:
-        """Translate a full algebra tree. Returns ``(cypher_string, params)``."""
+    def translate_algebra(self, algebra: CompValue, *, cypher_version_prefix: bool = True) -> tuple[str, dict]:
+        """Translate a full algebra tree. Returns ``(cypher_string, params)``.
+
+        Pass ``cypher_version_prefix=False`` to omit the ``CYPHER 25`` version annotation.
+        """
         subject_vars = collect_subject_vars(algebra)
         query = CypherQuery()
         final_query, _ = self._translate(algebra, subject_vars, query, {})
-        return final_query.render()
+        return final_query.render(cypher_version_prefix=cypher_version_prefix)
 
     # ── Internal dispatch ───────────────────────────────────────────────────
 
@@ -798,11 +801,12 @@ class Transpiler:
 # Convenience function
 # ---------------------------------------------------------------------------
 
-def translate(sparql: str, config: Neo4jStoreConfig) -> tuple[str, dict]:
+def translate(sparql: str, config: Neo4jStoreConfig, *, cypher_version_prefix: bool = True) -> tuple[str, dict]:
     """Translate a SPARQL SELECT query string to a Cypher query.
 
     Returns ``(cypher_string, params)`` ready to pass to the Neo4j driver.
+    Pass ``cypher_version_prefix=False`` to omit the ``CYPHER 25`` version annotation.
     """
     from rdflib.plugins.sparql import prepareQuery
     algebra = prepareQuery(sparql).algebra
-    return Transpiler(config).translate_algebra(algebra)
+    return Transpiler(config).translate_algebra(algebra, cypher_version_prefix=cypher_version_prefix)

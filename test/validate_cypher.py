@@ -88,13 +88,13 @@ def collect_from_findings() -> list[tuple[str, str]]:
 def explain(driver, cypher: str) -> str | None:
     """Return None on success, error message on failure."""
     # Replace $params with literals so EXPLAIN doesn't complain about missing params
-    body = re.sub(r"\$\w+", "null", cypher)
+    body = re.sub(r"\$\w+", "null", cypher).strip()
+    if not body:
+        return None
     # Insert EXPLAIN after the optional CYPHER version header
-    body = re.sub(r"^(CYPHER \d+\s*\n)", r"\1EXPLAIN ", body, count=1)
+    body = re.sub(r"^(CYPHER \d+)\s*\n", r"\1\nEXPLAIN ", body, count=1)
     if not re.match(r"^\s*(CYPHER \d+|EXPLAIN)\b", body):
         body = "EXPLAIN " + body
-    if not body.strip():
-        return None
     try:
         with driver.session() as session:
             session.run(body).consume()

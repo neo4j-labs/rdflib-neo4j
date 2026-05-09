@@ -30,18 +30,15 @@ def _config() -> Neo4jStoreConfig:
     )
 
 
-def _translate(sparql: str) -> tuple[str, dict]:
-    return translate(sparql, _config())
+def _translate(sparql: str, *, cypher_version_prefix: bool = True) -> tuple[str, dict]:
+    return translate(sparql, _config(), cypher_version_prefix=cypher_version_prefix)
 
 
 # ── helper ────────────────────────────────────────────────────────────────────
 
 def cypher_of(sparql: str) -> str:
-    cypher, _ = _translate(sparql)
-    # drop the CYPHER 25 header line for cleaner assertion strings
-    lines = cypher.splitlines()
-    body = "\n".join(l for l in lines if l != "CYPHER 25")
-    return body.strip()
+    cypher, _ = _translate(sparql, cypher_version_prefix=False)
+    return cypher.strip()
 
 
 # ── collect_subject_vars ──────────────────────────────────────────────────────
@@ -120,9 +117,8 @@ def test_bgp_fixed_uri_target():
         SELECT ?p WHERE {{
           ?p <{FOAF}knows> <{EX}Alice> .
         }}
-    """)
-    body = "\n".join(l for l in cypher.splitlines() if l != "CYPHER 25")
-    assert "knows" in body
+    """, cypher_version_prefix=False)
+    assert "knows" in cypher
     # The URI should appear as a parameter
     assert any(str(EX + "Alice") == v for v in params.values())
 
