@@ -1,0 +1,165 @@
+= Configuration Persistence
+[.procedures, opts=header]
+
+When `graph.open()` is called, `rdflib-neo4j` writes two meta-nodes to Neo4j that record the store configuration and namespace prefix mappings.
+These nodes match the schema used by https://neo4j.com/labs/neosemantics/[neosemantics (n10s)], so databases created with either tool are interoperable.
+
+== Meta-nodes written on open()
+
+=== _GraphConfig
+
+A single `_GraphConfig` node (identified by `{_id: 1}`) is created or updated with the active configuration flags.
+
+[source,cypher]
+----
+MERGE (gc:_GraphConfig {_id: 1}) SET gc += $params
+----
+
+The additive `SET +=` operator means that any properties already present on the node — for example those written by n10s — are preserved and not overwritten.
+
+Properties stored on `_GraphConfig`:
+
+|===
+| Property | Type | Description
+| `_handleVocabUris` | String | Vocabulary URI strategy: `SHORTEN`, `KEEP`, `MAP`, or `IGNORE`
+| `_handleMultival` | Integer | Multi-value strategy: `1` (OVERWRITE) or `2` (ARRAY)
+| `_keepLangTag` | Boolean | Whether language tags are preserved on string literals
+| `_keepCustomDataTypes` | Boolean | Whether custom XSD datatypes are preserved
+| `_applyNeo4jNaming` | Boolean | Whether Neo4j naming conventions are applied (see below)
+| `_handleRDFTypes` | String | RDF type handling strategy (when configured)
+|===
+
+To inspect the node after loading data:
+
+[source,cypher]
+----
+MATCH (c:_GraphConfig) RETURN c
+----
+
+=== _NsPrefDef
+
+A single `_NsPrefDef` node (identified by `{_id: 1}`) is created or updated with all active namespace prefix mappings.
+Each prefix is stored as a property whose key is the short prefix name and whose value is the full namespace URI.
+
+[source,cypher]
+----
+MERGE (nsp:_NsPrefDef {_id: 1}) SET nsp += $props
+----
+
+Again, `SET +=` ensures that n10s-managed prefixes not present in the `Neo4jStoreConfig` are not removed.
+
+To inspect the node after loading data:
+
+[source,cypher]
+----
+MATCH (p:_NsPrefDef) RETURN p
+----
+
+A typical result looks like:
+
+[source,json]
+----
+{
+  "_id": 1,
+  "rdf":  "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+  "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+  "owl":  "http://www.w3.org/2002/07/owl#",
+  "skos": "http://www.w3.org/2004/02/skos/core#",
+  "xsd":  "http://www.w3.org/2001/XMLSchema#",
+  "myns": "http://example.org/my-namespace/"
+}
+----
+
+== Loading existing prefixes from the database
+
+Before writing namespace prefixes, `open()` reads any `_NsPrefDef` node that already exists in the database.
+Prefixes found there that are not already defined in the `Neo4jStoreConfig` are added to the config automatically.
+This ensures that URI shortening during import is consistent with whatever prefixes were registered by a previous session or by n10s.
+
+Prefixes already defined in the config are not overwritten by values from the database.
+
+== The apply_neo4j_naming flag
+
+`apply_neo4j_naming` is a boolean flag on `Neo4jStoreConfig` (default: `False`).
+When `True`, it signals that relationship type names should be uppercased and node label names should be capitalised to follow Neo4j naming conventions.
+The flag value is persisted as `_applyNeo4jNaming` on the `_GraphConfig` node so that any tool inspecting the database can discover which naming convention was used during import.
+
+[source,python]
+----
+from rdflib_neo4j import Neo4jStoreConfig, HANDLE_VOCAB_URI_STRATEGY
+
+config = Neo4jStoreConfig(
+    auth_data=auth_data,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN,
+    apply_neo4j_naming=True,
+)
+----
+
+== Why this matters
+
+Persisting the configuration to Neo4j allows:
+
+* **Resumable imports** — reopening the store against the same database picks up the stored namespace prefixes so URI shortening is consistent across sessions.
+* **n10s interoperability** — `_GraphConfig` and `_NsPrefDef` are the same nodes that neosemantics uses, so data imported with `rdflib-neo4j` can be queried and extended with n10s procedures without any migration step.
+* **Auditability** — the configuration used during import is visible directly in the graph, which makes it easy to reproduce or inspect the import settings.
+
+== Python example: open, parse, close, reopen
+
+The following example shows how configuration and prefixes are restored when a store is reopened against the same database.
+
+[source,python]
+----
+from rdflib import Graph, Namespace
+from rdflib_neo4j import Neo4jStore, Neo4jStoreConfig, HANDLE_VOCAB_URI_STRATEGY
+
+auth_data = {
+    "uri":      "neo4j+s://your-instance.databases.neo4j.io",
+    "database": "neo4j",
+    "user":     "neo4j",
+    "pwd":      "your-password",
+}
+
+custom_prefixes = {
+    "myns": Namespace("http://example.org/my-namespace/"),
+}
+
+# --- First session: load data ---
+config = Neo4jStoreConfig(
+    auth_data=auth_data,
+    custom_prefixes=custom_prefixes,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN,
+    batching=True,
+)
+
+graph = Graph(store=Neo4jStore(config=config))
+# open() writes _GraphConfig and _NsPrefDef to Neo4j
+graph.open(configuration=None, create=True)
+graph.parse("https://example.org/my-data.ttl", format="ttl")
+graph.close(commit_pending_transaction=True)
+
+# --- Second session: reopen the store ---
+# No need to pass custom_prefixes again — they will be loaded from _NsPrefDef
+config2 = Neo4jStoreConfig(
+    auth_data=auth_data,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN,
+    batching=False,
+)
+
+graph2 = Graph(store=Neo4jStore(config=config2))
+# open() reads existing _NsPrefDef and adds "myns" back into config2 automatically
+graph2.open(configuration=None, create=False)
+
+# "myns" prefix is available again, consistent with the first session
+print(graph2.store.config.get_prefixes().get("myns"))
+# → Namespace('http://example.org/my-namespace/')
+
+graph2.close(commit_pending_transaction=False)
+----
+
+To verify the persisted nodes directly in Neo4j Browser or Cypher shell:
+
+[source,cypher]
+----
+MATCH (c:_GraphConfig) RETURN c;
+MATCH (p:_NsPrefDef)   RETURN p;
+----
