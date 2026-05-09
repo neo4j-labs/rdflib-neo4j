@@ -840,13 +840,15 @@ class Clause(ABC):
 
 @dataclass
 class MatchClause(Clause):
-    """``MATCH pattern [WHERE predicate]``"""
+    """``[OPTIONAL] MATCH pattern [WHERE predicate]``"""
 
     pattern: Union[NodePattern, PathPattern, QPPPattern, str]
     where: Optional[Predicate] = None
+    optional: bool = False
 
     def _render_lines(self) -> list[str]:
-        lines = [f"MATCH {self.pattern}"]
+        keyword = "OPTIONAL MATCH" if self.optional else "MATCH"
+        lines = [f"{keyword} {self.pattern}"]
         if self.where is not None:
             lines.append(f"WHERE {self.where}")
         return lines
@@ -1040,6 +1042,15 @@ class CypherQuery:
     ) -> "CypherQuery":
         """Append a :class:`MatchClause`."""
         self._clauses.append(MatchClause(pattern, where))
+        return self
+
+    def optional_match(
+        self,
+        pattern: Union[str, NodePattern, PathPattern, QPPPattern],
+        where: Optional[Predicate] = None,
+    ) -> "CypherQuery":
+        """Append an ``OPTIONAL MATCH`` :class:`MatchClause`."""
+        self._clauses.append(MatchClause(pattern, where, optional=True))
         return self
 
     def where(self, predicate: Predicate) -> "CypherQuery":
