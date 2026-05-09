@@ -1,0 +1,322 @@
+= SPARQL-to-Cypher Transpiler
+[.procedures, opts=header]
+
+The SPARQL-to-Cypher transpiler converts SPARQL SELECT queries into Cypher 25
+queries by walking the rdflib algebra abstract syntax tree (AST).  It mirrors
+the URI-to-name mapping that the Neo4j RDF store applies on import, so the
+generated Cypher works directly against data ingested through `Neo4jStore`.
+
+== Architecture Overview
+
+The transpiler consists of two modules:
+
+* `rdflib_neo4j.sparql.transpiler` — algebra AST walker that emits a
+  `CypherQuery` using the typed Cypher 25 DSL in `cypher_builder`.
+* `rdflib_neo4j.sparql.mapping` — `MappingContext` class that resolves RDF
+  predicate and type URIs to Neo4j property names, relationship types, and
+  labels, using the same strategy configured in `Neo4jStoreConfig`
+  (`SHORTEN`, `IGNORE`, `KEEP`, or `MAP`).
+
+== Public API
+
+[source,python]
+----
+from rdflib_neo4j.sparql.transpiler import translate
+
+cypher, params = translate(sparql_string, config)
+----
+
+`translate(sparql, config)` is the main entry point.
+
+|===
+| Parameter | Type | Description
+| `sparql` | `str` | A SPARQL SELECT query string.
+| `config` | `Neo4jStoreConfig` | Store configuration object that controls URI-to-name mapping.
+| *returns* | `tuple[str, dict]` | `(cypher_string, params)` ready to pass to the Neo4j driver.
+|===
+
+When you already have a parsed algebra (e.g. from `rdflib.plugins.sparql.prepareQuery`),
+you can call the lower-level entry point:
+
+[source,python]
+----
+from rdflib_neo4j.sparql.transpiler import Transpiler
+
+cypher, params = Transpiler(config).translate_algebra(algebra)
+----
+
+Both forms return `(cypher_string, params)` where `params` is a dictionary of
+named parameters that can be passed directly to the Neo4j driver's `execute_query`.
+
+=== Error Classes
+
+|===
+| Class | Description
+| `TranslationError` | Base class for all transpiler errors.
+| `UnsupportedAlgebraNode` | Raised when the algebra contains a node type not yet supported.
+|===
+
+== Worked Example
+
+Given this SPARQL query using the `foaf` prefix and the `SHORTEN` URI strategy:
+
+[source,sparql]
+----
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+SELECT ?name ?age WHERE {
+  ?p a foaf:Person ; foaf:name ?name ; foaf:age ?age .
+  FILTER(?age >= 18)
+} ORDER BY ?name LIMIT 20
+----
+
+With a config using `HANDLE_VOCAB_URI_STRATEGY.SHORTEN`:
+
+[source,python]
+----
+from rdflib_neo4j import Neo4jStoreConfig
+from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY
+from rdflib_neo4j.sparql.transpiler import translate
+
+config = Neo4jStoreConfig(
+    custom_prefixes={"foaf": "http://xmlns.com/foaf/0.1/"},
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN,
+)
+
+cypher, params = translate(sparql, config)
+----
+
+The transpiler produces:
+
+[source,cypher]
+----
+CYPHER 25
+MATCH (p:foaf__Person)
+WHERE p.`foaf__age` >= 18
+RETURN p.`foaf__name` AS name, p.`foaf__age` AS age
+ORDER BY p.`foaf__name` ASC
+LIMIT 20
+----
+
+With `HANDLE_VOCAB_URI_STRATEGY.IGNORE`, prefix namespaces are stripped, yielding
+shorter names: `Person`, `name`, `age`.
+
+== Subject-Variable Heuristic
+
+The transpiler must decide whether a SPARQL variable represents a *graph node*
+(subject of triples) or a *property value* (object of a data property).
+This distinction determines whether a variable becomes a `MATCH (var:Label)` node
+pattern or a `node.\`prop\`` property access.
+
+The decision is made by `collect_subject_vars`, which does a recursive pre-pass
+over the entire algebra tree before translation begins.  A variable is classified
+as a *node variable* if and only if it appears as the **subject** of at least one
+triple anywhere in the algebra.
+
+*Example:*
+
+[source,sparql]
+----
+SELECT ?p ?f ?fname WHERE {
+  ?p foaf:knows ?f .
+  ?f foaf:name ?fname .
+}
+----
+
+* `?p` — subject of triple 1 → node variable → emits `MATCH (p:Resource)`
+* `?f` — subject of triple 2 → node variable → emits `MATCH (p)-[:knows]->(f)`
+* `?fname` — never a subject → property variable → emits `f.\`name\` AS fname`
+
+== SPARQL Feature Coverage
+
+|===
+| SPARQL Feature | Algebra Node | Cypher Translation | Supported
+
+| Type constraint (`?p a foaf:Person`)
+| BGP
+| `MATCH (p:Label)`
+| Yes
+
+| Property binding (`foaf:name ?name`)
+| BGP
+| `node.\`prop\` AS name`
+| Yes
+
+| Literal constraint (`foaf:name "Alice"`)
+| BGP
+| `WHERE node.\`prop\` = "Alice"`
+| Yes
+
+| Relationship pattern (`?p foaf:knows ?f`)
+| BGP
+| `MATCH (p)-[:relType]->(f)`
+| Yes
+
+| Fixed-URI relationship target (`foaf:knows ex:Alice`)
+| BGP
+| `MATCH (p)-[:relType]->(:Resource {uri: $p0})`
+| Yes
+
+| `FILTER`
+| Filter
+| `WHERE predicate`
+| Yes
+
+| `&&` / `\|\|` / `!`
+| ConditionalAndExpression / Or / UnaryNot
+| `AND` / `OR` / `NOT`
+| Yes
+
+| `BOUND(?var)`
+| Builtin_BOUND
+| `var IS NOT NULL`
+| Yes
+
+| `REGEX(?s, pattern)`
+| Builtin_REGEX
+| `s =~ pattern`
+| Yes
+
+| `STRINGSTARTS`, `STRENDS`, `CONTAINS`
+| Builtin_STR*
+| `STARTS WITH`, `ENDS WITH`, `CONTAINS`
+| Yes
+
+| `STR`, `UCASE`, `LCASE`, `STRLEN`, `SUBSTR`, `CONCAT`
+| Builtin_*
+| `toString`, `toUpper`, `toLower`, `size`, `substring`, string concat
+| Yes
+
+| `ABS`, `CEIL`, `FLOOR`, `ROUND`
+| Builtin_*
+| `abs`, `ceil`, `floor`, `round`
+| Yes
+
+| `IF(cond, then, else)`
+| Builtin_IF
+| `CASE WHEN … THEN … ELSE … END`
+| Yes
+
+| `COALESCE`
+| Builtin_COALESCE
+| `coalesce(…)`
+| Yes
+
+| JOIN (multiple patterns sharing a variable)
+| Join
+| Sequential `MATCH` clauses
+| Yes
+
+| `OPTIONAL { … }`
+| LeftJoin
+| `OPTIONAL MATCH` (BGP patterns) / `OPTIONAL CALL {}` (complex patterns)
+| Yes
+
+| `UNION`
+| Union
+| `UNION`
+| Yes
+
+| `BIND(expr AS ?var)`
+| Extend
+| Expression evaluated inline, alias propagated to `RETURN`
+| Yes
+
+| `ORDER BY`
+| OrderBy
+| `ORDER BY expr ASC\|DESC`
+| Yes
+
+| `LIMIT` / `OFFSET`
+| Slice
+| `LIMIT n` / `SKIP n`
+| Yes
+
+| `DISTINCT`
+| Distinct
+| `RETURN DISTINCT`
+| Yes
+
+| `GROUP BY` + `COUNT`
+| AggregateJoin / Group
+| `WITH … , count(var) AS alias`
+| Yes
+
+| `GROUP BY` + `SUM` / `AVG` / `MIN` / `MAX`
+| AggregateJoin / Group
+| `WITH … , sum\|avg\|min\|max(var) AS alias`
+| Yes
+
+| `GROUP_CONCAT(?x; SEPARATOR=",")`
+| Aggregate_GroupConcat
+| `reduce(__s = "", __n IN collect(x) \| …)`
+| Yes
+
+| `MINUS { … }`
+| Minus
+| `WHERE NOT EXISTS { … }`
+| Yes
+
+| `VALUES ?var { … }`
+| values
+| `UNWIND $param AS var` (unbound) / `WHERE var IN $param` (already bound)
+| Yes
+
+| Variable `rdf:type` (`?p a ?type`)
+| BGP
+| (silently dropped)
+| No
+|===
+
+== Known Limitations
+
+=== Mandatory property bindings
+
+In SPARQL, a pattern like `?p foaf:name ?name` requires the property to be present
+(the triple must match).  The transpiler translates this to a property access
+`p.\`name\`` without emitting a `WHERE p.\`name\` IS NOT NULL` guard.
+
+In Neo4j a missing property returns `null` rather than eliminating the row, so
+queries that rely on absent-property filtering for correctness may return extra
+rows.  Add an explicit `FILTER(BOUND(?name))` in the SPARQL if you need strict
+absent-property elimination.
+
+=== Node variables projected as node objects
+
+When a subject variable such as `?p` is included in the `SELECT` clause, the
+transpiler returns the Cypher node object rather than the IRI string.  If you
+need the RDF IRI, project it explicitly:
+
+[source,sparql]
+----
+SELECT ?pUri ?name WHERE {
+  ?p a foaf:Person ; foaf:name ?name .
+  BIND(STR(?p) AS ?pUri)
+}
+----
+
+Or access `.uri` on the node result from the driver.
+
+=== Variable rdf:type object unsupported
+
+The pattern `?p a ?type` — where the object of `rdf:type` is itself a variable —
+is currently silently dropped.  Use a concrete type URI instead:
+
+[source,sparql]
+----
+# Not supported
+SELECT ?p WHERE { ?p a ?type }
+
+# Use this instead
+SELECT ?p WHERE { ?p a foaf:Person }
+----
+
+=== Complex OPTIONAL patterns use CALL subquery
+
+Simple `OPTIONAL { ?p foaf:mbox ?email }` patterns (BGP-only) are translated to
+`OPTIONAL MATCH`.  More complex optional bodies (nested joins, filters) fall back
+to `OPTIONAL CALL {} subquery` semantics, which requires Neo4j 5.x or later.
+
+=== SPARQL SELECT only
+
+The transpiler supports `SELECT` queries only.  `CONSTRUCT`, `DESCRIBE`, and
+`ASK` forms are not supported.

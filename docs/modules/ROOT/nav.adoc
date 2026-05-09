@@ -3,4 +3,5 @@
 * xref:neo4jstore.adoc[Neo4j Store]
 * xref:neo4jstoreconfig.adoc[Store Configuration]
 * xref:examples.adoc[Examples]
+* xref:sparql-transpiler.adoc[SPARQL Transpiler]
 * xref:contributing.adoc[Contributing]
