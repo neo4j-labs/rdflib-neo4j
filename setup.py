@@ -33,12 +33,20 @@ if __name__ == "__main__":
         platforms="All",
         url="https://github.com/neo4j-labs/rdflib-neo4j",
         install_requires=[
-            'rdflib >= 7.0.0', 'neo4j >= 5.0.0',
+            'rdflib >= 7.0.0', 'neo4j >= 5.0.0', 'duckdb >= 1.0.0',
         ],
-        packages=["rdflib_neo4j", "rdflib_neo4j.config", "rdflib_neo4j.query_composers"],
+        packages=[
+            "rdflib_neo4j",
+            "rdflib_neo4j.bulk",
+            "rdflib_neo4j.config",
+            "rdflib_neo4j.query_composers",
+        ],
         entry_points={
             'rdf.plugins.store': [
                 'neo4j-cypher = rdflib_neo4j.neo4jcypher:Neo4jStore',
+            ],
+            'console_scripts': [
+                'rdflib-neo4j-bulk-prototype = rdflib_neo4j.bulk.cli:main',
             ],
         },
         zip_safe=False
