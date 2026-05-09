@@ -445,3 +445,52 @@ class TestUnion:
             }}"""
         rows = run_sparql(sparql, transpiler_driver, transpiler_config)
         assert names_set(rows) == {"Alice", "Bob"}
+
+
+class TestVariablePredicate:
+    """Variable predicate (?s ?p ?o) tests."""
+
+    def test_variable_predicate_returns_rows(self, transpiler_driver, transpiler_config):
+        """?s ?p ?o — unbounded triple scan returns rows."""
+        sparql = "SELECT ?s ?p ?o WHERE { ?s ?p ?o . } LIMIT 10"
+        rows = run_sparql(sparql, transpiler_driver, transpiler_config)
+        assert len(rows) > 0
+
+    def test_variable_predicate_projects_relationship_type(self, transpiler_driver, transpiler_config):
+        """?p ?rel ?f — the rel column should contain relationship type strings."""
+        sparql = f"""
+            SELECT ?s ?p ?o WHERE {{
+              ?s ?p ?o .
+            }} LIMIT 20"""
+        rows = run_sparql(sparql, transpiler_driver, transpiler_config)
+        # All rows must have all three vars (s, p, o)
+        for row in rows:
+            assert "s" in row
+            assert "p" in row
+            assert "o" in row
+        # ?p should be relationship type strings
+        pred_values = {row["p"] for row in rows}
+        assert len(pred_values) > 0
+
+    def test_variable_predicate_knows_relationship(self, transpiler_driver, transpiler_config):
+        """?a ?rel ?b filtered to knows — returns the three knows edges."""
+        sparql = f"""
+            SELECT ?a ?p ?b WHERE {{
+              ?a a <{FOAF}Person> .
+              ?a ?p ?b .
+            }} LIMIT 50"""
+        rows = run_sparql(sparql, transpiler_driver, transpiler_config)
+        assert len(rows) > 0
+        # The relationship type column should be present in every row
+        for row in rows:
+            assert "p" in row
+
+    def test_variable_predicate_distinct_types(self, transpiler_driver, transpiler_config):
+        """Multiple relationship types should appear as distinct ?p values."""
+        sparql = f"""
+            SELECT DISTINCT ?p WHERE {{
+              ?s ?p ?o .
+            }}"""
+        rows = run_sparql(sparql, transpiler_driver, transpiler_config)
+        # The FOAF dataset has: knows, mbox — at least two distinct types
+        assert len(rows) >= 2

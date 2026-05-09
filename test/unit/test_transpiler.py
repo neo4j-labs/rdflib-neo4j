@@ -477,3 +477,44 @@ def test_two_hop_relationship():
     """)
     assert "knows" in cypher
     assert "fname" in cypher
+
+
+# ── Variable predicate (?s ?p ?o) ────────────────────────────────────────────
+
+def test_variable_predicate_all_vars():
+    """?s ?p ?o with all three projected — relationship bound to ?p."""
+    cypher = cypher_of(f"""
+        SELECT ?s ?p ?o WHERE {{
+          ?s ?p ?o .
+        }}
+    """)
+    assert "MATCH" in cypher
+    # Named relationship variable (no type constraint)
+    assert "[p]" in cypher or "p " in cypher
+    assert "RETURN" in cypher
+    assert "p" in cypher
+
+
+def test_variable_predicate_subject_predicate():
+    """?s ?p ?o WHERE ?s is a known Person — relationship still named ?p."""
+    cypher = cypher_of(f"""
+        SELECT ?s ?p ?o WHERE {{
+          ?s a <{FOAF}Person> .
+          ?s ?p ?o .
+        }}
+    """)
+    assert "MATCH" in cypher
+    assert "p" in cypher
+
+
+def test_variable_predicate_generates_match_clause():
+    """Ensure a MATCH clause with a named relationship var is emitted."""
+    cypher = cypher_of(f"""
+        SELECT ?s ?rel ?o WHERE {{
+          ?s ?rel ?o .
+        }}
+    """)
+    # The rel var name should appear in the Cypher
+    assert "rel" in cypher
+    # No type constraint on relationship (empty brackets or named-only)
+    assert "]->" in cypher

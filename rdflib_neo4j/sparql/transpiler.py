@@ -323,8 +323,9 @@ class Transpiler:
         # ── Collect per-subject metadata ────────────────────────────────────
         node_labels: dict[str, list[str]] = {}   # subject_var → labels
         where_preds: list[Predicate] = []
-        # (from_var, rel_type, to: str|tuple("uri", str, param))
-        rel_patterns: list[tuple[str, str, Any]] = []
+        # (from_var, rel_type_or_None, to: str|tuple, rel_var_or_None)
+        # rel_type_or_None=None means a variable predicate; rel_var_or_None carries the var name.
+        rel_patterns: list[tuple[str, Any, Any, Any]] = []
 
         def _ensure_labels(v: str) -> None:
             if v not in node_labels and v not in var_map:
@@ -343,19 +344,26 @@ class Transpiler:
                     label = self.mapping.resolve(o)
                     node_labels.setdefault(s_name, []).append(label)
                 # Variable type (?p a ?type) is unsupported for now
-            elif isinstance(o, Literal):
+            elif isinstance(p, Variable):
+                # Variable predicate: ?s ?p ?o — bind relationship to ?p
+                p_name = str(p)
+                if isinstance(o, Variable) and s_name is not None:
+                    o_name = str(o)
+                    _ensure_labels(o_name)
+                    rel_patterns.append((s_name, None, o_name, p_name))
+            elif isinstance(o, Literal) and not isinstance(p, Variable):
                 if isinstance(s, Variable):
                     prop = self.mapping.resolve(p)
                     lit_expr = _literal_to_expr(o, query)
                     prop_access = RawExpression(f"{s_name}.`{prop}`")
                     where_preds.append(Comparison(prop_access, "=", lit_expr))
-            elif isinstance(o, Variable):
+            elif isinstance(o, Variable) and not isinstance(p, Variable):
                 o_name = str(o)
                 prop = self.mapping.resolve(p)
                 if o_name in subject_vars:
                     # Relationship: both endpoints are graph nodes
                     _ensure_labels(o_name)
-                    rel_patterns.append((s_name, prop, o_name))
+                    rel_patterns.append((s_name, prop, o_name, None))
                 else:
                     if isinstance(s, Variable):
                         prop_expr = RawExpression(f"{s_name}.`{prop}`")
@@ -372,7 +380,7 @@ class Transpiler:
                 if isinstance(s, Variable):
                     prop = self.mapping.resolve(p)
                     uri_param = query.add_param(str(o))
-                    rel_patterns.append((s_name, prop, ("uri", str(o), uri_param)))
+                    rel_patterns.append((s_name, prop, ("uri", str(o), uri_param), None))
             elif isinstance(o, BNode):
                 pass  # blank-node objects skipped
 
@@ -397,7 +405,7 @@ class Transpiler:
         # cartesian product; combining them into one pattern is correlated.
         if optional:
             rel_target_only = {
-                to for (_, _, to) in rel_patterns
+                to for (_, _, to, _rv) in rel_patterns
                 if isinstance(to, str) and to not in var_map
             }
         else:
@@ -421,7 +429,7 @@ class Transpiler:
             var_map[var_name] = Var(var_name)
 
         # ── Emit MATCH for relationship patterns ────────────────────────────
-        for (from_var, rel_type, to_target) in rel_patterns:
+        for (from_var, rel_type, to_target, rel_var) in rel_patterns:
             from_node = AnonNode(Var(from_var))
             if isinstance(to_target, tuple):
                 # Fixed-URI endpoint: (:Resource {uri: $p0})
@@ -440,7 +448,12 @@ class Transpiler:
                     to_node = AnonNode(Var(to_target))
                 var_map.setdefault(to_target, Var(to_target))
 
-            rel_seg = RelSegment(types=[rel_type])
+            if rel_var is not None:
+                # Variable predicate (?s ?p ?o) — unnamed type, bind to p
+                rel_seg = RelSegment(var=Var(rel_var), types=[])
+                var_map[rel_var] = Var(rel_var)
+            else:
+                rel_seg = RelSegment(types=[rel_type])
             path = PathPattern(from_node).rel(rel_seg, to_node)
             if optional:
                 query.optional_match(path)

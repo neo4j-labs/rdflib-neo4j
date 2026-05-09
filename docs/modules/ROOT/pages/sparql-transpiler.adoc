@@ -129,6 +129,42 @@ SELECT ?p ?f ?fname WHERE {
 * `?f` — subject of triple 2 → node variable → emits `MATCH (p)-[:knows]->(f)`
 * `?fname` — never a subject → property variable → emits `f.\`name\` AS fname`
 
+== Variable Predicate (`?s ?p ?o`)
+
+When the predicate in a triple is itself a variable (`?s ?p ?o`), the transpiler
+emits a Cypher relationship pattern with **no type constraint** and binds the
+relationship to the variable name:
+
+[source,cypher]
+----
+MATCH (s)-[p]->(o)
+RETURN s, p, o
+----
+
+The relationship object `p` is returned as a Neo4j `Relationship`.  When the query
+is executed via `Neo4jStore.query()`, the relationship is converted back to an
+`rdflib.URIRef` using the configured prefix map (or a `Literal` for types that
+cannot be reconstructed as URIs).
+
+*Typical uses:*
+
+[source,sparql]
+----
+# Browse all outgoing edges from Person nodes
+SELECT ?name ?rel ?target WHERE {
+  ?p a foaf:Person ; foaf:name ?name .
+  ?p ?rel ?target .
+}
+
+# Discover all relationship types in the graph
+SELECT DISTINCT ?p WHERE { ?s ?p ?o . }
+----
+
+NOTE: Only `?s ?p ?o` patterns where both subject and object are variables are
+supported.  A fixed-subject (`<ex:Alice> ?p ?o`) or fixed-object pattern with a
+variable predicate is not yet translated — it falls back to the rdflib in-memory
+evaluator.
+
 == SPARQL Feature Coverage
 
 |===
@@ -157,6 +193,11 @@ SELECT ?p ?f ?fname WHERE {
 | Fixed-URI relationship target (`foaf:knows ex:Alice`)
 | BGP
 | `MATCH (p)-[:relType]->(:Resource {uri: $p0})`
+| Yes
+
+| Variable predicate (`?s ?p ?o`)
+| BGP
+| `MATCH (s)-[p]->(o)` — no type constraint, `p` projected as relationship
 | Yes
 
 | `FILTER`

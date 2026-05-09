@@ -133,6 +133,77 @@ class Neo4jStore(Store):
     def remove(self, triple, context=None, txn=None):
         raise NotImplemented("This is a streamer so it doesn't preserve the state, there is no removal feature.")
 
+    def query(self, strOrQuery, initBindings=None, initNs=None, base=None, DEBUG=False):
+        from rdflib.plugins.sparql import prepareQuery
+        from rdflib.query import Result
+        from rdflib import URIRef, Literal, XSD
+        from rdflib_neo4j.sparql.transpiler import Transpiler, TranslationError, UnsupportedAlgebraNode
+
+        if not self.is_open() or initBindings:
+            return super().query(strOrQuery, initBindings, initNs, base, DEBUG)
+        try:
+            if isinstance(strOrQuery, str):
+                ns = {**self.config.get_prefixes(), **(initNs or {})}
+                prepared = prepareQuery(strOrQuery, initNs=ns, base=base)
+            else:
+                prepared = strOrQuery
+            algebra = prepared.algebra
+        except Exception:
+            return super().query(strOrQuery, initBindings, initNs, base, DEBUG)
+
+        if algebra.name != "SelectQuery":
+            return super().query(strOrQuery, initBindings, initNs, base, DEBUG)
+
+        try:
+            cypher, params = Transpiler(self.config).translate_algebra(algebra)
+        except (TranslationError, UnsupportedAlgebraNode):
+            return super().query(strOrQuery, initBindings, initNs, base, DEBUG)
+
+        records = list(self.session.run(cypher, params))
+        vars_ = algebra.get("PV") or []
+
+        def _to_term(value):
+            if value is None:
+                return None
+            try:
+                from neo4j.graph import Node as _Neo4jNode, Relationship as _Neo4jRel
+                if isinstance(value, _Neo4jNode):
+                    uri = value.get("uri")
+                    return URIRef(uri) if uri else None
+                if isinstance(value, _Neo4jRel):
+                    rel_type = value.type
+                    # Best-effort URI reconstruction from relationship type
+                    prefixes = self.config.get_prefixes()
+                    for prefix, ns in prefixes.items():
+                        if rel_type.startswith(f"{prefix}:"):
+                            local = rel_type[len(prefix) + 1:]
+                            return URIRef(str(ns) + local)
+                    # rel_type might be a full URI (KEEP strategy) or local name (IGNORE)
+                    if rel_type.startswith("http"):
+                        return URIRef(rel_type)
+                    return Literal(rel_type)
+            except ImportError:
+                pass
+            if isinstance(value, bool):
+                return Literal(value, datatype=XSD.boolean)
+            if isinstance(value, int):
+                return Literal(value, datatype=XSD.integer)
+            if isinstance(value, float):
+                return Literal(value, datatype=XSD.double)
+            return Literal(str(value))
+
+        result = Result("SELECT")
+        result.vars = list(vars_)
+        result.bindings = []
+        for record in records:
+            binding = {}
+            for var in vars_:
+                term = _to_term(record.get(str(var)))
+                if term is not None:
+                    binding[var] = term
+            result.bindings.append(binding)
+        return result
+
     def __close_on_error(self):
         """
         Empties the query buffers in case of an error.
