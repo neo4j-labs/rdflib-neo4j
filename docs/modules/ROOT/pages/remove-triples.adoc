@@ -1,0 +1,269 @@
+= Removing Triples
+
+This page explains how to retract triples from the Neo4j store using `graph.remove()`, which case the dispatcher selects, and the exact Cypher that gets executed for each case.
+
+== Overview
+
+`graph.remove((subject, predicate, object))` follows the standard rdflib `Store.remove()` contract.
+The call accepts `None` as a wildcard for any component of the triple.
+
+The store dispatches to one of three Cypher patterns based on the *type of the object*:
+
+[cols="1,2,2", options="header"]
+|===
+| Case | Condition | Effect in Neo4j
+
+| Property retraction
+| Object is a `Literal`
+| `REMOVE n.<prop>` — removes the property from the subject node
+
+| Label retraction
+| Predicate is `rdf:type`
+| `REMOVE n:<Label>` — removes the class label from the subject node
+
+| Relationship deletion
+| Object is a URI or BNode
+| `DELETE r` — deletes the relationship between the two nodes
+|===
+
+BNode subjects and objects are normalised to `bnode://<id>` URIs before the lookup so that they match the representation stored in Neo4j.
+
+The subject's entry is evicted from the in-memory node cache after every successful removal.
+
+== Case 1: Property Retraction
+
+Removing a triple whose object is a `Literal` strips the corresponding property from the subject node.
+
+.Cypher executed
+[source,cypher]
+----
+MATCH (n:Resource {uri: $uri})
+REMOVE n.`<prop_name>`
+----
+
+The property name is derived from the predicate URI using the configured `HANDLE_VOCAB_URI_STRATEGY` (e.g. `IGNORE` keeps only the local name).
+
+.Example
+[source,python]
+----
+from rdflib import URIRef, Literal, RDF, RDFS
+from rdflib import Graph
+from rdflib_neo4j import Neo4jStore, Neo4jStoreConfig, HANDLE_VOCAB_URI_STRATEGY
+
+auth_data = {
+    'uri': 'bolt://localhost:7687',
+    'database': 'neo4j',
+    'user': 'neo4j',
+    'pwd': 'your_password',
+}
+config = Neo4jStoreConfig(
+    auth_data=auth_data,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+    batching=False,
+)
+
+EX = "http://example.org/"
+alice = URIRef(f"{EX}alice")
+name_pred = URIRef(f"{EX}name")
+
+graph = Graph(store=Neo4jStore(config=config))
+
+# Add a property triple
+graph.add((alice, name_pred, Literal("Alice")))
+
+# Remove the same property triple
+graph.remove((alice, name_pred, Literal("Alice")))
+----
+
+== Case 2: Label Retraction (rdf:type)
+
+Removing a triple whose predicate is `rdf:type` strips the corresponding Neo4j label from the subject node.
+The `:Resource` base label is always preserved.
+
+.Cypher executed
+[source,cypher]
+----
+MATCH (n:Resource {uri: $uri})
+REMOVE n:`<Label>`
+----
+
+.Example
+[source,python]
+----
+from rdflib import URIRef, RDF, SKOS
+
+EX = "http://example.org/"
+alice = URIRef(f"{EX}alice")
+
+# Add a type triple  →  adds label :Concept to the node
+graph.add((alice, RDF.type, SKOS.Concept))
+
+# Remove the type triple  →  REMOVE n:`Concept`
+graph.remove((alice, RDF.type, SKOS.Concept))
+----
+
+=== Wildcard object: remove all labels
+
+Passing `None` as the object removes every non-`:Resource` label from the node:
+
+[source,python]
+----
+# Remove all class labels, keep :Resource
+graph.remove((alice, RDF.type, None))
+----
+
+.Cypher executed
+[source,cypher]
+----
+MATCH (n:Resource {uri: $uri})
+SET n:Resource
+----
+
+== Case 3: Relationship Deletion
+
+Removing a triple whose object is a URI or BNode deletes the relationship between the two resource nodes.
+
+.Cypher executed
+[source,cypher]
+----
+MATCH (a:Resource {uri: $from_uri})-[r:`<rel_type>`]->(b:Resource {uri: $to_uri})
+DELETE r
+----
+
+.Example
+[source,python]
+----
+from rdflib import URIRef
+
+EX = "http://example.org/"
+alice = URIRef(f"{EX}alice")
+bob   = URIRef(f"{EX}bob")
+knows = URIRef(f"{EX}knows")
+
+# Add a relationship triple  →  creates (:Resource)-[:knows]->(:Resource)
+graph.add((alice, knows, bob))
+
+# Remove the relationship triple  →  DELETE r
+graph.remove((alice, knows, bob))
+----
+
+=== Wildcard predicate: remove all relationships to object
+
+Passing `None` as the predicate deletes every relationship between the two nodes, regardless of type:
+
+[source,python]
+----
+# Delete every relationship from alice to bob
+graph.remove((alice, None, bob))
+----
+
+.Cypher executed
+[source,cypher]
+----
+MATCH (a:Resource {uri: $from_uri})-[r]->(b:Resource {uri: $to_uri})
+DELETE r
+----
+
+== Wildcard Patterns
+
+The table below summarises the supported wildcard combinations.
+
+[cols="1,1,1,3", options="header"]
+|===
+| Subject | Predicate | Object | Behaviour
+
+| URI
+| URI
+| Literal
+| Removes the specific property
+
+| URI
+| `rdf:type`
+| URI
+| Removes the specific class label
+
+| URI
+| `rdf:type`
+| `None`
+| Removes all class labels (keeps `:Resource`)
+
+| URI
+| URI
+| URI / BNode
+| Deletes the specific typed relationship
+
+| URI
+| `None`
+| URI / BNode
+| Deletes all relationships from subject to object
+
+| URI
+| URI
+| `None`
+| Deletes all outgoing relationships of the given type from the subject
+
+| URI
+| `None`
+| `None`
+| Not yet fully supported — use explicit predicates where possible
+
+| `None`
+| _any_
+| _any_
+| Wildcard subject is not supported; returns early without error
+|===
+
+NOTE: Wildcard removal for Literal objects (i.e. `graph.remove((s, None, None))` where the intent is to clear all properties) is not yet implemented.
+A warning is logged and the call returns without modifying the store.
+
+== Complete Round-trip Example
+
+The snippet below adds one triple of each kind and then removes all three.
+
+[source,python]
+----
+from rdflib import Graph, URIRef, Literal, RDF, SKOS
+from rdflib_neo4j import Neo4jStore, Neo4jStoreConfig, HANDLE_VOCAB_URI_STRATEGY
+
+auth_data = {
+    'uri': 'bolt://localhost:7687',
+    'database': 'neo4j',
+    'user': 'neo4j',
+    'pwd': 'your_password',
+}
+config = Neo4jStoreConfig(
+    auth_data=auth_data,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+    batching=False,
+)
+
+EX = "http://example.org/"
+alice  = URIRef(f"{EX}alice")
+bob    = URIRef(f"{EX}bob")
+knows  = URIRef(f"{EX}knows")
+name   = URIRef(f"{EX}name")
+
+graph = Graph(store=Neo4jStore(config=config))
+
+# --- Add all three kinds of triple ---
+
+# 1. Property:      MERGE (n:Resource {uri:alice}) SET n.name = "Alice"
+graph.add((alice, name, Literal("Alice")))
+
+# 2. Type:          MERGE (n:Resource {uri:alice}) SET n:Person
+graph.add((alice, RDF.type, SKOS.Concept))
+
+# 3. Relationship:  MERGE (:Resource {uri:alice})-[:knows]->(:Resource {uri:bob})
+graph.add((alice, knows, bob))
+
+# --- Remove each triple in reverse ---
+
+# Deletes the (:Resource {uri:alice})-[:knows]->(:Resource {uri:bob}) relationship
+graph.remove((alice, knows, bob))
+
+# Removes the :Concept label from the alice node
+graph.remove((alice, RDF.type, SKOS.Concept))
+
+# Removes the `name` property from the alice node
+graph.remove((alice, name, Literal("Alice")))
+----

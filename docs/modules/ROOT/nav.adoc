@@ -3,4 +3,5 @@
 * xref:neo4jstore.adoc[Neo4j Store]
 * xref:neo4jstoreconfig.adoc[Store Configuration]
 * xref:examples.adoc[Examples]
+* xref:remove-triples.adoc[Removing Triples]
 * xref:contributing.adoc[Contributing]
