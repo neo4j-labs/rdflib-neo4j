@@ -336,8 +336,8 @@ def test_where_composed_with_and():
     assert "n.active = $p1" in cypher
 
 
-def test_where_separate_calls_emit_separate_clauses():
-    """Two where() calls produce two WhereClause entries in the pipeline."""
+def test_where_consecutive_calls_merge_with_and():
+    """Consecutive where() calls are merged into a single WHERE ... AND ... clause."""
     q = CypherQuery()
     p1 = q.add_param("Alice")
     p2 = q.add_param(True)
@@ -348,7 +348,8 @@ def test_where_separate_calls_emit_separate_clauses():
          .return_("n")
          .render()
     )
-    assert cypher.count("WHERE") == 2
+    assert cypher.count("WHERE") == 1
+    assert "AND" in cypher
 
 
 def test_match_inline_where():

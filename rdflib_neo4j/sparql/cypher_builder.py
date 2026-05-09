@@ -1054,8 +1054,11 @@ class CypherQuery:
         return self
 
     def where(self, predicate: Predicate) -> "CypherQuery":
-        """Append a standalone :class:`WhereClause`."""
-        self._clauses.append(WhereClause(predicate))
+        """Append a :class:`WhereClause`, merging with the previous one via AND if consecutive."""
+        if self._clauses and isinstance(self._clauses[-1], WhereClause):
+            self._clauses[-1] = WhereClause(self._clauses[-1].predicate.and_(predicate))
+        else:
+            self._clauses.append(WhereClause(predicate))
         return self
 
     def call(self, imports: list[str], inner: "CypherQuery") -> "CypherQuery":

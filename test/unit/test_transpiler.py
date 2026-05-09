@@ -134,7 +134,7 @@ def test_filter_comparison():
           FILTER(?age > 18)
         }}
     """)
-    assert "WHERE p.`age` > 18" in cypher
+    assert "p.`age` > 18" in cypher
 
 
 def test_filter_string_equality():
@@ -144,7 +144,7 @@ def test_filter_string_equality():
           FILTER(?name = "Alice")
         }}
     """)
-    assert 'WHERE p.`name` = "Alice"' in cypher
+    assert 'p.`name` = "Alice"' in cypher
 
 
 def test_filter_and():
@@ -176,7 +176,41 @@ def test_filter_regex():
           FILTER(REGEX(?name, "^Al"))
         }}
     """)
-    assert "=~" in cypher
+    # SPARQL partial match: "^Al" → Cypher full match: "^Al.*"
+    assert '=~ "^Al.*"' in cypher
+
+
+def test_filter_regex_unanchored():
+    cypher = cypher_of(f"""
+        SELECT ?p WHERE {{
+          ?p <{FOAF}name> ?name .
+          FILTER(REGEX(?name, "li"))
+        }}
+    """)
+    # No anchors → wrap both ends
+    assert '=~ ".*li.*"' in cypher
+
+
+def test_filter_regex_fully_anchored():
+    cypher = cypher_of(f"""
+        SELECT ?p WHERE {{
+          ?p <{FOAF}name> ?name .
+          FILTER(REGEX(?name, "^Alice$"))
+        }}
+    """)
+    # Fully anchored → no wrapping needed
+    assert '=~ "^Alice$"' in cypher
+
+
+def test_filter_regex_flags():
+    cypher = cypher_of(f"""
+        SELECT ?p WHERE {{
+          ?p <{FOAF}name> ?name .
+          FILTER(REGEX(?name, "^al", "i"))
+        }}
+    """)
+    # Case-insensitive flag prepended as inline flag
+    assert '=~ "(?i)^al.*"' in cypher
 
 
 # ── Project — SELECT projection ───────────────────────────────────────────────
@@ -373,6 +407,19 @@ def test_minus():
           MINUS {{ ?p <{FOAF}blocked> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> }}
         }}
     """)
+    # Pure property filter in MINUS → null-safe NOT coalesce(pred, false)
+    assert "NOT coalesce(" in cypher
+    assert "blocked" in cypher
+
+
+def test_minus_relationship():
+    cypher = cypher_of(f"""
+        SELECT ?name WHERE {{
+          ?p <{FOAF}name> ?name .
+          MINUS {{ ?p <{FOAF}knows> ?anyone }}
+        }}
+    """)
+    # Relationship pattern in MINUS → NOT EXISTS { MATCH ... }
     assert "NOT EXISTS" in cypher
 
 

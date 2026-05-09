@@ -30,6 +30,7 @@ from rdflib_neo4j.sparql.cypher_builder import (
     IsNotNull,
     LabelAtom,
     ListExpression,
+    MatchClause,
     NodePattern,
     NotPredicate,
     OrderItem,
@@ -43,6 +44,7 @@ from rdflib_neo4j.sparql.cypher_builder import (
     StringLiteral,
     Var,
     WhenClause,
+    WhereClause,
     Comparison,
     InPredicate,
 )
@@ -91,6 +93,28 @@ def collect_subject_vars(node: Any) -> set[str]:
                 if isinstance(item, CompValue):
                     subjects |= collect_subject_vars(item)
     return subjects
+
+
+def collect_all_vars(node: Any) -> set[str]:
+    """Recursively collect ALL variable names (subjects and objects) from triples."""
+    if not isinstance(node, CompValue):
+        return set()
+    vars_: set[str] = set()
+    if node.name == "BGP":
+        for (s, _p, o) in node.get("triples", []):
+            if isinstance(s, Variable):
+                vars_.add(str(s))
+            if isinstance(o, Variable):
+                vars_.add(str(o))
+    for key in node.keys():
+        val = node[key]
+        if isinstance(val, CompValue):
+            vars_ |= collect_all_vars(val)
+        elif isinstance(val, (list, tuple)):
+            for item in val:
+                if isinstance(item, CompValue):
+                    vars_ |= collect_all_vars(item)
+    return vars_
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +220,17 @@ class Transpiler:
             )
         return self._translate(inner, subject_vars, query, var_map)
 
+    def _make_return_items(self, pv: list, var_map: VarMap) -> list:
+        items = []
+        for var in pv:
+            name = str(var)
+            expr = var_map.get(name, Var(name))
+            if isinstance(expr, Var) and str(expr) == name:
+                items.append(f"{name}")
+            else:
+                items.append(AliasExpression(expr, name))
+        return items
+
     def _project(
         self, node, subject_vars, query, var_map,
         extra_limit=None, extra_skip=None, extra_distinct=False,
@@ -213,27 +248,44 @@ class Transpiler:
                 extra_distinct = True
             inner = inner["p"]
 
+        pv: list[Variable] = node["PV"]
+
+        # Union: each branch needs its own RETURN so column names match.
+        if isinstance(inner, CompValue) and inner.name == "Union":
+            q1 = CypherQuery()
+            q2 = CypherQuery()
+            q1, vm1 = self._translate(inner["p1"], subject_vars, q1, {})
+            q2, vm2 = self._translate(inner["p2"], subject_vars, q2, {})
+            combined_vm = {**vm2, **vm1}
+
+            order_items: list[OrderItem] = []
+            for cond in order_conditions:
+                expr = self._sparql_expr(cond["expr"], combined_vm, q1)
+                asc = cond.get("order") != "DESC"
+                order_items.append(OrderItem(expr, ascending=asc))
+
+            q1.return_(
+                *self._make_return_items(pv, vm1),
+                distinct=extra_distinct,
+                order_by=order_items if order_items else None,
+                skip=extra_skip,
+                limit=extra_limit,
+            )
+            q2.return_(*self._make_return_items(pv, vm2))
+            q1.union(q2)
+            return q1, combined_vm
+
         query, var_map = self._translate(inner, subject_vars, query, var_map)
 
         # Resolve order-by expressions now that var_map is populated
-        order_items: list[OrderItem] = []
+        order_items = []
         for cond in order_conditions:
             expr = self._sparql_expr(cond["expr"], var_map, query)
             asc = cond.get("order") != "DESC"
             order_items.append(OrderItem(expr, ascending=asc))
 
-        pv: list[Variable] = node["PV"]
-        return_items = []
-        for var in pv:
-            name = str(var)
-            expr = var_map.get(name, Var(name))
-            if isinstance(expr, Var) and str(expr) == name:
-                return_items.append(f"{name}")
-            else:
-                return_items.append(AliasExpression(expr, name))
-
         query.return_(
-            *return_items,
+            *self._make_return_items(pv, var_map),
             distinct=extra_distinct,
             order_by=order_items if order_items else None,
             skip=extra_skip,
@@ -305,9 +357,16 @@ class Transpiler:
                     _ensure_labels(o_name)
                     rel_patterns.append((s_name, prop, o_name))
                 else:
-                    # Property variable binding
                     if isinstance(s, Variable):
-                        var_map[o_name] = RawExpression(f"{s_name}.`{prop}`")
+                        prop_expr = RawExpression(f"{s_name}.`{prop}`")
+                        if o_name in var_map:
+                            # Variable already bound (e.g. from VALUES/UNWIND) — add join predicate
+                            where_preds.append(Comparison(prop_expr, "=", var_map[o_name]))
+                        else:
+                            # New property variable binding — mandatory unless optional
+                            var_map[o_name] = prop_expr
+                            if not optional:
+                                where_preds.append(IsNotNull(prop_expr))
             elif isinstance(o, URIRef):
                 # Object is a fixed URI → relationship to a known node
                 if isinstance(s, Variable):
@@ -332,10 +391,25 @@ class Transpiler:
                         query.match(np)
                     var_map[s_uri] = Var(alias)
 
+        # When optional, nodes that are only relationship targets get their label
+        # inlined into the path pattern instead of a separate OPTIONAL MATCH.
+        # Two separate OPTIONAL MATCHes are independent in Cypher and produce a
+        # cartesian product; combining them into one pattern is correlated.
+        if optional:
+            rel_target_only = {
+                to for (_, _, to) in rel_patterns
+                if isinstance(to, str) and to not in var_map
+            }
+        else:
+            rel_target_only = set()
+
         # ── Emit MATCH for node variables ───────────────────────────────────
         for var_name, labels in node_labels.items():
             if var_name in var_map:
                 continue  # already matched in outer scope
+            if var_name in rel_target_only:
+                var_map[var_name] = Var(var_name)  # will be bound via rel pattern
+                continue
             np = NodePattern(
                 Var(var_name),
                 labels if labels else ["Resource"],
@@ -357,8 +431,13 @@ class Transpiler:
                     props={self.mapping.uri_key: uri_param},
                 )
             else:
-                # Variable endpoint
-                to_node = AnonNode(Var(to_target))
+                # Variable endpoint — inline label when optional to avoid cartesian product
+                if optional and to_target in rel_target_only:
+                    labels = node_labels.get(to_target, [])
+                    label_expr = LabelAtom(labels[0]) if labels else LabelAtom("Resource")
+                    to_node = AnonNode(Var(to_target), label_expr=label_expr)
+                else:
+                    to_node = AnonNode(Var(to_target))
                 var_map.setdefault(to_target, Var(to_target))
 
             rel_seg = RelSegment(types=[rel_type])
@@ -595,11 +674,34 @@ class Transpiler:
     # ── Minus ───────────────────────────────────────────────────────────────
 
     def _minus(self, node, subject_vars, query, var_map):
-        """Translate MINUS using NOT EXISTS { inner }."""
+        """Translate MINUS.
+
+        - Pure property filter → negate the predicate directly (NOT pred).
+        - Graph pattern → NOT EXISTS { MATCH ... RETURN ... } (full Cypher subquery).
+        """
         query, var_map = self._translate(node["p1"], subject_vars, query, var_map)
         inner = query.subquery()
-        inner, _ = self._translate(node["p2"], subject_vars, inner, var_map)
-        query.where(query.not_exists_subquery(inner))
+        # Treat all variables in the MINUS body as node vars so relationships are MATCHed
+        minus_svars = subject_vars | collect_all_vars(node["p2"])
+        inner, inner_vm = self._translate(node["p2"], minus_svars, inner, var_map)
+
+        has_match = any(isinstance(c, MatchClause) for c in inner._clauses)
+        if not has_match:
+            # Pure property filter — use null-safe negation.
+            # NOT (pred) is null when the property is absent, wrongly excluding the row.
+            # NOT coalesce(pred, false) treats missing property as non-matching (SPARQL semantics).
+            where_preds = [c.predicate for c in inner._clauses if isinstance(c, WhereClause)]
+            if where_preds:
+                combined: Predicate = where_preds[0]
+                for p in where_preds[1:]:
+                    combined = combined.and_(p)
+                query.where(RawPredicate(f"NOT coalesce({combined}, false)"))
+        else:
+            # Graph pattern — full Cypher subquery with RETURN.
+            new_vars = [v for v in inner_vm if v not in var_map]
+            ret = [AliasExpression(inner_vm[v], v) for v in new_vars] or [RawExpression("1")]
+            inner.return_(*ret)
+            query.where(query.not_exists_subquery(inner))
         return query, var_map
 
     # ── Values ──────────────────────────────────────────────────────────────
@@ -712,7 +814,22 @@ class Transpiler:
             return IsNotNull(v)
         if name == "Builtin_REGEX":
             text = self._sparql_expr(expr["text"], var_map, query)
-            pattern = self._sparql_expr(expr["pattern"], var_map, query)
+            pat_term = expr["pattern"]
+            flags_str = str(expr["flags"]) if "flags" in expr else ""
+            if isinstance(pat_term, Literal):
+                # SPARQL REGEX is partial match; Cypher =~ is full match — wrap with .*
+                raw = str(pat_term)
+                if not raw.startswith("^"):
+                    raw = ".*" + raw
+                # ends with unescaped $ means start-anchor is already set
+                if not (raw.endswith("$") and not raw.endswith("\\$")):
+                    raw = raw + ".*"
+                if flags_str:
+                    raw = f"(?{flags_str}){raw}"
+                pattern = StringLiteral(raw)
+            else:
+                # Dynamic pattern — cannot rewrite at compile time; emit as-is
+                pattern = self._sparql_expr(pat_term, var_map, query)
             return RawPredicate(f"{text} =~ {pattern}")
         if name == "TrueFilter":
             return RawPredicate("true")
