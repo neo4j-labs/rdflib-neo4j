@@ -1,0 +1,165 @@
+= Handling rdf:type Triples
+[.procedures, opts=header]
+
+The `handle_rdf_types` configuration parameter controls how `rdf:type` triples are persisted in Neo4j.
+By default, rdflib-neo4j mirrors the behaviour of https://neo4j.com/labs/neosemantics/[neosemantics (n10s)]:
+an `rdf:type` triple causes the object's local name to be added as a Neo4j label on the subject node.
+Two additional modes let you store types as explicit graph relationships instead of (or in addition to) labels.
+
+== Strategy Values
+
+The behaviour is controlled by the `HandleRDFTypesStrategy` enum (imported from `rdflib_neo4j.config.const`).
+
+|===
+| Value | Behaviour
+
+| `LABELS` *(default)*
+| The object's local name is added as a Neo4j label on the subject node.
+  No relationship is created. Mirrors n10s `handleRDFTypes=LABELS`.
+
+| `NODES`
+| A `(:Resource {uri: "<class URI>"})-[:rdf__type]->` relationship is created.
+  A `:Class` node is also merged for the object URI.
+  No label is added to the subject.
+
+| `LABELS_AND_NODES`
+| Both a Neo4j label *and* the `[:rdf__type]` relationship / `:Class` node are created.
+|===
+
+== Worked Example
+
+Given the triple:
+
+[source,turtle]
+----
+ex:fido  rdf:type  ex:Dog .
+----
+
+=== LABELS (default)
+
+The subject node receives the label `:Dog`.
+No relationship is stored.
+
+Resulting graph shape:
+
+[source,cypher]
+----
+(:Resource:Dog {uri: "http://www.example.org/indiv/fido"})
+----
+
+Query to retrieve the type:
+
+[source,cypher]
+----
+MATCH (n:Resource {uri: "http://www.example.org/indiv/fido"})
+RETURN labels(n) AS types
+----
+
+=== NODES
+
+A `:Class` node is merged for `ex:Dog` and a `[:rdf__type]` relationship is created.
+The subject receives *no* extra label.
+
+Resulting graph shape:
+
+[source,cypher]
+----
+(:Resource {uri: "http://www.example.org/indiv/fido"})
+  -[:rdf__type]->
+(:Resource:Class {uri: "http://www.example.org/indiv/Dog"})
+----
+
+Query to retrieve the type:
+
+[source,cypher]
+----
+MATCH (:Resource {uri: "http://www.example.org/indiv/fido"})
+      -[:rdf__type]->(c:Class)
+RETURN c.uri AS type
+----
+
+=== LABELS_AND_NODES
+
+Both the label *and* the relationship are created simultaneously.
+
+Resulting graph shape:
+
+[source,cypher]
+----
+(:Resource:Dog {uri: "http://www.example.org/indiv/fido"})
+  -[:rdf__type]->
+(:Resource:Class {uri: "http://www.example.org/indiv/Dog"})
+----
+
+Query to retrieve the type (label approach):
+
+[source,cypher]
+----
+MATCH (n:Resource {uri: "http://www.example.org/indiv/fido"})
+RETURN labels(n) AS types
+----
+
+Query to retrieve the type (relationship approach):
+
+[source,cypher]
+----
+MATCH (:Resource {uri: "http://www.example.org/indiv/fido"})
+      -[:rdf__type]->(c:Class)
+RETURN c.uri AS type
+----
+
+== Comparison Table
+
+|===
+| Strategy | Subject gets label | [:rdf__type] relationship | :Class node created
+
+| `LABELS`
+| yes
+| no
+| no
+
+| `NODES`
+| no
+| yes
+| yes
+
+| `LABELS_AND_NODES`
+| yes
+| yes
+| yes
+|===
+
+== Configuration Example
+
+[source,python]
+----
+from rdflib_neo4j import Neo4jStoreConfig, Neo4jStore, HANDLE_VOCAB_URI_STRATEGY
+from rdflib_neo4j.config.const import HandleRDFTypesStrategy
+from rdflib import ConjunctiveGraph
+
+config = Neo4jStoreConfig(
+    auth_data={
+        "uri": "bolt://localhost:7687",
+        "database": "neo4j",
+        "user": "neo4j",
+        "pwd": "password",
+    },
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN,
+    handle_rdf_types=HandleRDFTypesStrategy.LABELS_AND_NODES,
+)
+
+store = Neo4jStore(config=config)
+g = ConjunctiveGraph(store=store)
+g.open(config, create=True)
+g.parse("data.ttl", format="turtle")
+----
+
+== Compatibility Note
+
+The `LABELS` strategy (the default) matches the behaviour of n10s when configured with
+`handleRDFTypes=LABELS` in a `GraphConfig`.  If you are migrating data from n10s or
+need interoperability with n10s tooling, `LABELS` is the correct choice.
+
+Use `NODES` or `LABELS_AND_NODES` when you need to traverse `rdf:type` as a first-class
+graph relationship — for example, to support SPARQL queries that treat type assertions
+as edges, or to retain the full Class hierarchy as explicit nodes in your graph.
