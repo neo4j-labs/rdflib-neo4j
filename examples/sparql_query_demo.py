@@ -164,6 +164,17 @@ EXAMPLES = {
           ?s ?p ?o .
         }
         LIMIT 20"""),
+    "Friend stats (GROUP BY + AVG)": textwrap.dedent("""\
+        PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+        SELECT ?name (COUNT(?friend) AS ?friendCount) (AVG(?friendAge) AS ?avgFriendAge)
+        WHERE {
+          ?p a foaf:Person ;
+             foaf:name ?name ;
+             foaf:knows ?friend .
+          OPTIONAL { ?friend foaf:age ?friendAge }
+        }
+        GROUP BY ?name
+        ORDER BY DESC(?friendCount)"""),
 }
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -357,7 +368,7 @@ if run_btn and cypher_str:
             tbl_col, stat_col = st.columns([5, 1])
             with tbl_col:
                 st.markdown('<div class="section-label">Results</div>', unsafe_allow_html=True)
-                st.dataframe(rows, use_container_width=True, height=160)
+                st.dataframe(rows, width="stretch", height=160)
             with stat_col:
                 st.markdown('<div class="section-label">Stats</div>', unsafe_allow_html=True)
                 st.metric("Rows", len(rows))
