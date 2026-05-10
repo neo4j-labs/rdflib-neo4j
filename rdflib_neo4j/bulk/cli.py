@@ -307,9 +307,9 @@ def main(argv=None):
         parser.error("--compact-db PATH is required for --stage compact")
 
     output_path = Path(args.output) if args.output else None
-    # Only create the output directory when we'll actually write files to it.
-    writes_output = args.stage in ("all", "export", "export-nodes", "export-rels")
-    if writes_output and output_path is not None:
+    # Always create the output directory when --output is given so the default staging.duckdb
+    # path is valid even for --stage ingest (which writes only the DB, not Parquet files).
+    if output_path is not None:
         output_path.mkdir(parents=True, exist_ok=True)
     # Default DB sits inside the output directory; explicit --db overrides this.
     db_path = args.db if args.db is not None else str(output_path / "staging.duckdb")
