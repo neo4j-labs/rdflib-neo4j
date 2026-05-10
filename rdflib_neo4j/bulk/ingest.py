@@ -346,25 +346,57 @@ class _DecompressFile:
     serd reads sequentially via Read() callbacks and only calls SeekPosition()
     for EOF detection — it never seeks backward.  We track bytes read and
     return that as the current position, satisfying serd without actual seeking.
+
+    An optional *filter_cmd* (e.g. ``["grep", "-v", "pattern"]``) is chained
+    after the decompressor via a pipe — useful to drop lines that would cause
+    serd to crash even with strict_parsing=false (e.g. IRIs with backslashes
+    in YAGO-style Wikipedia-derived datasets).
     """
 
-    def __init__(self, real_path: str, comp_ext: str) -> None:
+    def __init__(
+        self,
+        real_path: str,
+        comp_ext: Optional[str],
+        filter_cmd: Optional[list] = None,
+    ) -> None:
         import subprocess
 
-        cmd = _find_decompressor(comp_ext)
-        if cmd is None:
-            raise RuntimeError(
-                f"No decompressor found for .{comp_ext} files. "
-                f"Install one of: {[c[0] for c in _DECOMPRESSORS[comp_ext]]}"
+        self._procs: list = []
+        if comp_ext:
+            cmd = _find_decompressor(comp_ext)
+            if cmd is None:
+                raise RuntimeError(
+                    f"No decompressor found for .{comp_ext} files. "
+                    f"Install one of: {[c[0] for c in _DECOMPRESSORS[comp_ext]]}"
+                )
+            p1 = subprocess.Popen(
+                cmd + [real_path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
             )
-        self._proc = subprocess.Popen(
-            cmd + [real_path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-        )
+        else:
+            # No decompression — use cat to produce a pipe so downstream tools
+            # (e.g. ag) see stdin-mode input and don't add line numbers.
+            p1 = subprocess.Popen(
+                ["cat", real_path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+            )
+        self._procs.append(p1)
+        src_stdout = p1.stdout
+
+        if filter_cmd:
+            p2 = subprocess.Popen(
+                filter_cmd, stdin=src_stdout, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            if comp_ext:
+                src_stdout.close()  # let upstream receive SIGPIPE if p2 exits
+            self._procs.append(p2)
+            self._stdout = p2.stdout
+        else:
+            self._stdout = src_stdout
         self._pos = 0
         self._closed = False
 
     def read(self, n: int = -1) -> bytes:
-        data = self._proc.stdout.read(n) if n >= 0 else self._proc.stdout.read()
+        data = self._stdout.read(n) if n >= 0 else self._stdout.read()
         self._pos += len(data)
         return data
 
@@ -385,8 +417,9 @@ class _DecompressFile:
 
     def close(self) -> None:
         if not self._closed:
-            self._proc.stdout.close()
-            self._proc.wait()
+            self._stdout.close()
+            for p in reversed(self._procs):
+                p.wait()
             self._closed = True
 
     def __enter__(self):
@@ -394,6 +427,19 @@ class _DecompressFile:
 
     def __exit__(self, *_):
         self.close()
+
+
+_decomp_fs_registry: dict = {}  # id(connection) -> DecompressingFS
+
+
+def _get_or_create_decomp_fs(connection):
+    """Return the DecompressingFS for *connection*, creating and registering it once."""
+    key = id(connection)
+    if key not in _decomp_fs_registry:
+        fs = _make_decomp_fs()
+        connection.register_filesystem(fs)
+        _decomp_fs_registry[key] = fs
+    return _decomp_fs_registry[key]
 
 
 def _make_decomp_fs():
@@ -411,25 +457,41 @@ def _make_decomp_fs():
 
         def __init__(self):
             super().__init__()
-            self._registry: dict[str, tuple[str, str]] = {}
+            self._registry: dict[str, tuple] = {}
 
-        def register(self, virtual: str, real: str, comp_ext: str) -> None:
-            self._registry[virtual] = (real, comp_ext)
+        def register(
+            self,
+            virtual: str,
+            real: str,
+            comp_ext: str,
+            filter_cmd: Optional[list] = None,
+        ) -> None:
+            self._registry[virtual] = (real, comp_ext, filter_cmd)
 
-        def _lookup(self, path: str) -> tuple[str, Optional[str]]:
+        def _lookup(self, path: str) -> tuple:
             p = path.removeprefix("decomp://")
-            entry = self._registry.get(p)
-            return entry if entry else (p, None)
+            return self._registry.get(p, (p, None, None))
 
         def open(self, path, mode="rb", **kwargs):
-            real, comp_ext = self._lookup(path)
-            return _DecompressFile(real, comp_ext) if comp_ext else open(real, "rb")
+            real, comp_ext, filter_cmd = self._lookup(path)
+            return (
+                _DecompressFile(real, comp_ext, filter_cmd)
+                if comp_ext or filter_cmd
+                else open(real, "rb")
+            )
 
         def info(self, path, **kwargs):
-            real, _ = self._lookup(path)
+            real, comp_ext, filter_cmd = self._lookup(path)
+            if filter_cmd:
+                # Return a small nominal size so serd never sees bytes_read < declared_size.
+                # (Filtered output is smaller than original; serd raises SERD failure if it
+                # reads fewer bytes than the size reported here.)
+                size = 1
+            else:
+                size = _os.stat(real).st_size
             return {
                 "name": path.removeprefix("decomp://"),
-                "size": _os.stat(real).st_size,
+                "size": size,
                 "type": "file",
             }
 
@@ -452,6 +514,7 @@ def ingest_duckdb_rdf(
     rdf_format: Optional[str],
     connection,
     progress: bool = True,
+    filter_cmd: Optional[list] = None,
 ) -> int:
     """Ingest *path* entirely within DuckDB using the community rdf extension.
 
@@ -505,19 +568,22 @@ def ingest_duckdb_rdf(
         decomp_note = f" [decompress via {decomp_cmd[0]}]" if decomp_cmd else ""
         print(f"[{label}] loading {path}{decomp_note} ...", file=sys.stderr, flush=True)
 
-    if comp_ext:
-        # Register a decomp:// virtual path so the rdf extension sees the right
-        # file extension for format auto-detection (.xml / .ttl / etc.)
+    count_before = connection.execute("SELECT count(*) FROM rdf_triples").fetchone()[0]
+
+    if comp_ext or filter_cmd:
+        # Use the decomp:// virtual FS whenever decompression or filtering is needed.
+        # The virtual path carries the RDF extension serd needs (.ttl, .xml …).
+        # Reuse a single DecompressingFS per connection — DuckDB only allows one
+        # registration per protocol name.
         virtual = f"/{_os.path.basename(base_path)}"
         if rdf_ext == "xml" and not virtual.endswith((".xml", ".rdf")):
             virtual = _os.path.splitext(virtual)[0] + ".xml"
-        fs = _make_decomp_fs()
-        fs.register(virtual, _os.path.abspath(path), comp_ext)
-        connection.register_filesystem(fs)
+        fs = _get_or_create_decomp_fs(connection)
+        fs.register(virtual, _os.path.abspath(path), comp_ext, filter_cmd)
         effective_path = f"decomp://{virtual}"
         connection.execute(sql, {"path": effective_path})
     else:
-        # Uncompressed: use the real path directly, symlink .owl→.xml if needed.
+        # Uncompressed, no filter: use the real path directly, symlink .owl→.xml if needed.
         effective_path = path
         symlink_path: Optional[str] = None
         if is_rdfxml and ext not in _DUCKDB_RDFXML_EXTENSIONS:
@@ -531,7 +597,7 @@ def ingest_duckdb_rdf(
             if symlink_path and os.path.islink(symlink_path):
                 os.unlink(symlink_path)
 
-    total = connection.execute("SELECT count(*) FROM rdf_triples").fetchone()[0]
+    total = connection.execute("SELECT count(*) FROM rdf_triples").fetchone()[0] - count_before
 
     if progress:
         elapsed = time.monotonic() - start
@@ -554,12 +620,18 @@ def ingest(
     backend: str = "rdflib",
     batch_size: int = 100_000,
     progress: bool = True,
+    filter_cmd: Optional[list] = None,
 ) -> int:
-    """Ingest *path* into the ``rdf_triples`` staging table using *backend*."""
+    """Ingest *path* into the ``rdf_triples`` staging table using *backend*.
+
+    *filter_cmd* (duckdb_rdf only) is an optional shell command list piped after
+    the decompressor — e.g. ``["grep", "-v", "<[^>]*\\\\[^>]*>"]`` to drop lines
+    with backslash-containing IRIs (YAGO/Wikipedia datasets).
+    """
     if backend == "oxigraph":
         return ingest_oxigraph(path, rdf_format, connection, batch_size, progress)
     if backend == "rdflib":
         return ingest_rdflib(path, rdf_format, connection, batch_size, progress)
     if backend == "duckdb_rdf":
-        return ingest_duckdb_rdf(path, rdf_format, connection, progress)
+        return ingest_duckdb_rdf(path, rdf_format, connection, progress, filter_cmd)
     raise ValueError(f"Unknown backend '{backend}'. Choose from: {BACKENDS}")

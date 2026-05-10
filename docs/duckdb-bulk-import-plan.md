@@ -724,6 +724,78 @@ Interpretation:
 13. Small fixture tests.
 14. ChEBI benchmark script and result report.
 
+## Known Failure Modes and Workarounds
+
+### duckdb_rdf backend — compressed input
+
+The `rdf` extension's serd parser requires seekable files.  Named pipes (FIFOs)
+fail with `PipeFileSystem: SeekPosition is not implemented!`.
+
+**Workaround**: a fsspec `DecompressingFS` registered with DuckDB intercepts
+`decomp://` URLs, wraps a decompressor subprocess (`pigz`, `bzip2`, `xz`,
+`zstd`, `7zz`) in a forward-only file object, and fakes `SeekPosition()` by
+returning a monotonically increasing byte offset.  serd only calls this for
+EOF detection, not for random access, so the fake seek is safe.  No temp file
+is written to disk.
+
+Decompressor preference order for `.gz`: `pigz` (parallel) → `zcat` → `gzip`.
+For `.bz2`: `pbzip2` → `bzip2`.  For `.7z`: `7zz -mmt{N}` → `7z -mmt{N}`.
+
+A GH issue was filed with the `duck_rdf` maintainer requesting native
+decompression support via a C++ `FileHandle` wrapper using zlib (see
+https://github.com/nonodename/duck_rdf/issues/36).
+
+### duckdb_rdf backend — invalid Turtle content (real-world datasets)
+
+serd is a strict Turtle parser.  Two classes of real-world data trigger crashes
+or hard errors even with `strict_parsing=false`:
+
+| Issue | Example | Symptom |
+|---|---|---|
+| Backslash escape sequences in IRIs | `<ar/معالج_IBM_BlueGene_\L\P>` | `SERD parsing error 'Invalid syntax'` |
+| ISO 639-2 (3-letter) language tags | `"text"@deu` | `SERD other error` (crash) |
+
+Both patterns appear in YAGO 3.1 Wikipedia-derived data.  `strict_parsing=false`
+handles some syntax errors but cannot recover from the backslash or 3-letter
+language-tag crash.
+
+**Workaround**: pass a `--filter-cmd` that strips offending lines before serd
+sees them.  Use `ag` (Silver Searcher) for speed over `grep`:
+
+```bash
+# Drop lines with backslash IRIs and 3-letter language tags
+--filter-cmd 'ag -v "(<[^>]*\\[^>]*>|\"@[a-z]{3}[ .])"'
+```
+
+This drops a small fraction of triples (~0.05% backslash IRIs; variable % of
+multilingual anchor-text triples for 3-letter tags).  For production use,
+consider a pre-processing step that normalises language tags (ISO 639-2 →
+ISO 639-1) rather than discarding them.
+
+### neo4j-admin database import — database name positional arg broken with --input-type=parquet
+
+In `neo4j-enterprise-2026.04.0`, specifying a database name other than the
+default `neo4j` as the positional `<database>` argument fails with:
+
+```
+Unable to find the parent of the path: <name>
+```
+
+The argument is validated as a filesystem path rather than a database name when
+`--input-type=parquet` is active.  This appears to be a bug in 2026.04.0.
+
+**Workaround**: omit the database name (import into the default `neo4j`
+database), then rename the database directory in `data/databases/` afterwards.
+
+### rdflib / oxigraph backends — Python per-row bottleneck
+
+Both backends use `executemany` to insert into DuckDB, which caps throughput
+at ~2–3k triples/s due to the Python GIL and per-call overhead.  These backends
+exist as correctness fallbacks for data that the `duckdb_rdf` backend cannot
+parse (DTD entity declarations in RDF/XML, non-standard language tags).
+
+**Not a bug**; for large datasets use `--parser duckdb_rdf`.
+
 ## Open Risks
 
 - rdflib RDF/XML parsing may be too slow or memory-heavy at 100 GB+.
@@ -739,3 +811,166 @@ Interpretation:
 - Dynamic labels in Parquet import need confirmation on the target importer.
 - DuckDB temp storage and sort/group-by memory need explicit configuration for
   100 GB+ runs.
+
+## Directory / Multi-File Input
+
+The CLI (`rdflib-neo4j-bulk-prototype`) now accepts a directory as its `input`
+argument.  All files with recognised RDF extensions (`.nt`, `.ttl`, `.xml`,
+`.rdf`, `.owl`, `.nq`, `.trig`, and compressed variants) are ingested
+sequentially into the same staging DuckDB table, sorted lexicographically.
+
+```bash
+# Ingest an entire directory
+rdflib-neo4j-bulk-prototype /path/to/DBPedia-Subset \
+    --parser duckdb_rdf \
+    --output /tmp/dbpedia-out
+
+# Restrict to a specific extension pattern
+rdflib-neo4j-bulk-prototype /path/to/DBPedia-Subset \
+    --glob "*.nt" \
+    --parser duckdb_rdf \
+    --output /tmp/dbpedia-out
+```
+
+The `--glob` flag is a `Path.glob()` pattern relative to the directory.
+
+### Open Design Decision: Filename-Based Primary Label
+
+When loading a directory of RDF files, the primary label for nodes that lack an
+`rdf:type` triple defaults to `Resource`.  Three options for using the filename
+as a label hint:
+
+**Option A — per-file `rdf:type` injection** *(preferred for simplicity)*
+: Before ingesting each file, add an `rdf:type <filename-stem>` triple for
+every subject appearing in the file.  Requires a pre-scan pass or a separate
+staging step.  Works transparently with the existing SQL projection.
+
+**Option B — primary_label override after projection**
+: Track which `source_order` range came from each file (record first/last order
+per file).  After `build_facts()`, update `primary_label` to the filename stem
+for any node whose only labels are generic (`Resource`).  No pre-scan needed;
+requires extending the schema with a `file_tag` column in `rdf_triples`.
+
+**Option C — configurable filename → label mapping (CLI flag)**
+: Add `--file-label-pattern` accepting a Python regex with a named group
+`label` extracted from the filename stem.  Example:
+`--file-label-pattern "(?P<label>[a-z]+)_types_en"` maps
+`instance_types_en.nt` → `InstanceType`.  Maximum flexibility, maximum
+configuration burden.
+
+**Recommendation**: implement Option B first (minimal schema change, no
+pre-scan) with a `--filename-label` flag that enables the feature.
+
+---
+
+## LargeRDFBench Dataset Examples
+
+Datasets sourced from https://github.com/dice-group/LargeRDFBench
+
+### NYT (New York Times Linked Data)
+
+3 RDF/XML files (~38 MB total). Clean data, no filter needed.
+
+```bash
+rdflib-neo4j-bulk-prototype /Users/mh/d/data/rdf/NYT \
+    --parser duckdb_rdf \
+    --output /tmp/nyt-out
+
+# With filename-based labels (locations, organizations, people):
+rdflib-neo4j-bulk-prototype /Users/mh/d/data/rdf/NYT \
+    --parser duckdb_rdf \
+    --filename-label \
+    --output /tmp/nyt-out
+```
+
+Result (filename-label): 110,185 nodes (Concept: 9,872 · Feature: 1,760 · locations: 1,959 · organizations: 3,060 · people: 5,015 · Resource: 88,519), 176,908 props, 146,567 rels — ~1 second.
+
+### Affymetrix (Bio2RDF microarray annotations)
+
+66 N-Triples files, ~8 GB total. Four data quality issues require filtering:
+- Lines starting with `<bio2rdf_dataset:` — underscore in URI scheme, invalid per RFC 3986
+- Lines containing `<http://...gi|...|...>` — pipe `|` characters in IRIs (GenBank accessions)
+- Lines containing IRIs with embedded spaces (e.g. `<http://bio2rdf.org/ec:EC:1.5.99.8;  1.5.1.12>`)
+- Lines containing IRIs with backtick characters (e.g. `<http://bio2rdf.org/symbol:tomQ\`b>`)
+
+```bash
+rdflib-neo4j-bulk-prototype /Users/mh/d/data/rdf/Affymetrix \
+    --parser duckdb_rdf \
+    --filename-label \
+    --filename-label-strip ".na32.annot" \
+    --filter-cmd 'ag -v "(^<bio2rdf_dataset:|<[^>]*\|[^>]*>|<[^>]* [^>]*>|<[^>]*`[^>]*>)"' \
+    --output /tmp/affymetrix-out
+```
+
+Label strip `.na32.annot` converts `HG-U133_Plus_2.na32.annot` → `HG-U133_Plus_2` as the Neo4j label.
+
+Throughput with `cat | ag` filter: ~175,000 triples/s per file (vs ~1M/s unfiltered; bottleneck is the pipeline overhead).
+
+### DBPedia Subset
+
+30 N-Triples files, ~7.5 GB total. Data is clean for `duckdb_rdf`.
+
+```bash
+rdflib-neo4j-bulk-prototype /Users/mh/d/data/rdf/DBPedia-Subset \
+    --glob "*.nt" \
+    --parser duckdb_rdf \
+    --output /tmp/dbpedia-out
+
+# Note: directory also contains dbpedia_3.5.1.owl (RDF/XML) —
+# use --glob "*.nt" to exclude it, or omit --glob to include all formats.
+```
+
+### YAGO 3.1 (25 GB compressed, 2.66 billion triples)
+
+Single `.ttl.gz` file. Two crash-causing patterns require filtering:
+- Backslash escape sequences in IRIs: `<ar/word\L\P>` → SERD "Invalid syntax"  
+- ISO 639-2 three-letter language tags: `"text"@deu` → SERD "other error"
+
+```bash
+rdflib-neo4j-bulk-prototype \
+    /Users/mh/d/data/rdf/yago/yago3.1_entire_ttl.gz \
+    --format turtle \
+    --parser duckdb_rdf \
+    --filter-cmd 'ag -v "(<[^>]*\\[^>]*>|\"@[a-z]{3}[ .])"' \
+    --output /Users/mh/d/data/rdf/yago-bulk-out \
+    --db /Users/mh/d/data/rdf/yago-bulk-out/staging.duckdb
+```
+
+Status: **in progress** — filter caught most bad lines; failed at line 383M (29 min in).
+A remaining serd-crashing pattern exists in YAGO. Investigate with:
+```bash
+pigz -dc yago3.1_entire_ttl.gz | ag -v "(<[^>]*\\[^>]*>|\"@[a-z]{3}[ .])" | \
+    sed -n '383522420,383522430p'
+```
+
+### FIBO (Financial Industry Business Ontology)
+
+Source: https://edmconnect.edmcouncil.org/okgspecialinterestgroup/resources-sig-link/resources-sig-link-fibo-products-download
+
+Single compressed N-Triples file, 2.1 MB gzip (~241K triples). Clean standard IRIs — no filter needed.
+
+```bash
+rdflib-neo4j-bulk-prototype /Users/mh/d/data/rdf/fibo/fibo.nt.gz \
+    --format nt \
+    --parser duckdb_rdf \
+    --output /tmp/fibo-out
+```
+
+Result: 29,273 nodes across 70+ typed labels (Class, Exchange, Country, Currency, CodeElement, Restriction, …), 60,139 props, 60,522 rels — 1 second at 1M triples/s.
+
+### Freebase (~30 GB compressed, 3.13 billion triples)
+
+```bash
+rdflib-neo4j-bulk-prototype \
+    /Users/mh/d/data/rdf/freebase-rdf-latest.gz \
+    --format nt \
+    --parser duckdb_rdf \
+    --output /Users/mh/d/data/rdf/freebase-out \
+    --db /Users/mh/d/data/rdf/freebase-out/staging.duckdb
+```
+
+Expected: Freebase uses clean Freebase IRIs — no filter likely needed. Estimated ~2–3 hours for ingestion.
+
+**Observed**: Python process runs at 100% CPU during ingestion — DuckDB/serd is the bottleneck, not I/O.
+This suggests the duckdb_rdf extension's serd parser is single-threaded and CPU-bound for large uncompressed streams.
+TODO: profile with `py-spy top` to identify hot path and investigate whether DuckDB parallel reads or chunked ingestion can help.

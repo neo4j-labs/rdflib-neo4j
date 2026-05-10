@@ -22,12 +22,16 @@ class DuckDBBulkPrototype:
         batch_size: int = 100_000,
         backend: str = "rdflib",
         progress: bool = True,
+        filter_cmd: Optional[list] = None,
+        filename_label: bool = False,
     ):
         self.db_path = db_path
         self.config = config or BulkImportConfig()
         self.batch_size = batch_size
         self.backend = backend
         self.progress = progress
+        self.filter_cmd = filter_cmd
+        self.filename_label = filename_label
         self.connection = duckdb.connect(db_path)
         self.initialize()
 
@@ -48,6 +52,14 @@ class DuckDBBulkPrototype:
             )
             """
         )
+        self.connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS subject_file_tag (
+                subject VARCHAR PRIMARY KEY,
+                file_tag VARCHAR NOT NULL
+            )
+            """
+        )
 
     def ingest_file(self, path: str, rdf_format: Optional[str] = None) -> int:
         """Stream *path* into the staging table using the configured backend."""
@@ -58,7 +70,77 @@ class DuckDBBulkPrototype:
             backend=self.backend,
             batch_size=self.batch_size,
             progress=self.progress,
+            filter_cmd=self.filter_cmd,
         )
+
+    def ingest_directory(
+        self,
+        directory: str,
+        rdf_format: Optional[str] = None,
+        glob_pattern: Optional[str] = None,
+        filename_label_strip: Optional[str] = None,
+    ) -> int:
+        """Ingest all RDF files in *directory* into the staging table.
+
+        Files are sorted lexicographically for deterministic ordering.
+        *glob_pattern* overrides the default extension-based discovery
+        (e.g. ``"*.nt"`` to restrict to N-Triples only).
+        """
+        from pathlib import Path as _Path
+
+        _RDF_SUFFIXES = {
+            ".nt", ".ttl", ".turtle", ".n3",
+            ".xml", ".rdf", ".owl",
+            ".nq", ".nquads", ".trig",
+            # compressed variants
+            ".nt.gz", ".ttl.gz", ".nt.bz2", ".ttl.bz2",
+            ".nt.zst", ".ttl.zst", ".nt.xz", ".ttl.xz",
+        }
+
+        dir_path = _Path(directory)
+        if glob_pattern:
+            files = sorted(dir_path.glob(glob_pattern))
+        else:
+            files = sorted(
+                f for f in dir_path.iterdir()
+                if f.is_file() and any(f.name.lower().endswith(s) for s in _RDF_SUFFIXES)
+            )
+
+        if not files:
+            raise FileNotFoundError(
+                f"No RDF files found in {directory}. "
+                f"Pass --glob to specify a pattern (e.g. '*.nt')."
+            )
+
+        if self.progress:
+            import sys as _sys
+            print(
+                f"[ingest] {len(files)} files in {directory}",
+                file=_sys.stderr,
+            )
+
+        total = 0
+        for f in files:
+            max_rowid_before = self.connection.execute(
+                "SELECT coalesce(max(rowid), -1) FROM rdf_triples"
+            ).fetchone()[0]
+            total += self.ingest_file(str(f), rdf_format=rdf_format)
+            if self.filename_label:
+                stem = _Path(f).stem
+                if filename_label_strip and stem.endswith(filename_label_strip):
+                    stem = stem[: -len(filename_label_strip)]
+                file_tag = stem
+                self.connection.execute(
+                    """
+                    INSERT INTO subject_file_tag
+                    SELECT DISTINCT subject, ?
+                    FROM rdf_triples
+                    WHERE rowid > ?
+                    ON CONFLICT DO NOTHING
+                    """,
+                    [file_tag, max_rowid_before],
+                )
+        return total
 
     def ingest_triples(self, triples: Iterable) -> int:
         rows = []
@@ -144,6 +226,19 @@ class DuckDBBulkPrototype:
 
         # ---- node_rows (one per resource, primary_label + labels array) ----
         # resources = subjects ∪ non-literal, non-type objects
+        if self.filename_label:
+            file_tag_join = "LEFT JOIN subject_file_tag sft ON r.uri = sft.subject"
+            file_tag_primary = "COALESCE(sft.file_tag, 'Resource')"
+            file_tag_labels = """
+                CASE WHEN sft.file_tag IS NOT NULL
+                     THEN list_prepend('Resource', list_prepend(sft.file_tag, coalesce(list(DISTINCT nl.label ORDER BY nl.label), [])))
+                     ELSE list_prepend('Resource', coalesce(list(DISTINCT nl.label ORDER BY nl.label), []))
+                END"""
+        else:
+            file_tag_join = ""
+            file_tag_primary = "'Resource'"
+            file_tag_labels = "list_prepend('Resource', coalesce(list(DISTINCT nl.label ORDER BY nl.label), []))"
+
         self.connection.execute(f"""
             INSERT INTO node_rows
             WITH all_uris AS (
@@ -158,14 +253,13 @@ class DuckDBBulkPrototype:
                 r.uri,
                 COALESCE(
                     MIN(CASE WHEN nl.label NOT IN ({generic}) THEN nl.label END),
-                    'Resource'
+                    {file_tag_primary}
                 ) AS primary_label,
-                list_prepend('Resource', coalesce(
-                    list(DISTINCT nl.label ORDER BY nl.label), []
-                )) AS labels
+                {file_tag_labels} AS labels
             FROM all_uris r
             LEFT JOIN node_labels nl ON r.uri = nl.uri
-            GROUP BY r.uri
+            {file_tag_join}
+            GROUP BY r.uri{', sft.file_tag' if self.filename_label else ''}
         """)
 
         # ---- property_facts (literal objects, not rdf:type) ----

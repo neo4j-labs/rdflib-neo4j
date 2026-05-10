@@ -13,7 +13,7 @@ def main(argv=None):
         prog="rdflib-neo4j-bulk-prototype",
         description="Convert RDF input into DuckDB-projected Neo4j bulk import Parquet files.",
     )
-    parser.add_argument("input", help="RDF input file")
+    parser.add_argument("input", help="RDF input file or directory of RDF files")
     parser.add_argument("--output", required=True, help="Output directory")
     parser.add_argument(
         "--db",
@@ -21,6 +21,11 @@ def main(argv=None):
         help="DuckDB database path (default: <output>/staging.duckdb; use :memory: to keep in RAM)",
     )
     parser.add_argument("--format", dest="rdf_format", help="RDF parser format (turtle, xml, nt, nquads, trig, n3)")
+    parser.add_argument(
+        "--glob",
+        default=None,
+        help="Glob pattern for directory input (e.g. '*.nt'). Default: auto-detect all known RDF extensions.",
+    )
     parser.add_argument(
         "--parser",
         choices=list(BACKENDS),
@@ -42,10 +47,34 @@ def main(argv=None):
         choices=[mode.value for mode in AggregationMode],
         default=AggregationMode.ANY.value,
     )
+    parser.add_argument(
+        "--filename-label-strip",
+        default=None,
+        help="Suffix to strip from the filename stem before using as label (e.g. '.na32.annot' for Affymetrix).",
+    )
+    parser.add_argument(
+        "--filename-label",
+        action="store_true",
+        help=(
+            "Use the input filename stem as a Neo4j label for nodes that lack an rdf:type. "
+            "Applies to directory input; each file's stem becomes the label for its subjects "
+            "(e.g. 'people.rdf' -> :people label). First file wins for subjects appearing in multiple files."
+        ),
+    )
     parser.add_argument("--language-projection", action="store_true")
     parser.add_argument("--language-filter")
     parser.add_argument("--batch-size", type=int, default=100_000)
     parser.add_argument("--no-progress", action="store_true", help="Suppress progress output")
+    parser.add_argument(
+        "--filter-cmd",
+        help=(
+            "Shell command piped after the decompressor (duckdb_rdf only). "
+            "Use ag (Silver Searcher) for speed. "
+            "Example for YAGO/Wikipedia datasets (drops backslash IRIs and "
+            "3-letter language tags that crash serd): "
+            """'ag -v "(<[^>]*\\\\[^>]*>|\"@[a-z]{3}[ .])"'"""
+        ),
+    )
     args = parser.parse_args(argv)
 
     # Default DB is on-disk inside the output directory to reduce memory pressure.
@@ -59,15 +88,29 @@ def main(argv=None):
         language_projection=args.language_projection,
         language_filter=args.language_filter,
     )
+    import shlex
+    filter_cmd = shlex.split(args.filter_cmd) if args.filter_cmd else None
+
     prototype = DuckDBBulkPrototype(
         db_path=db_path,
         config=config,
         batch_size=args.batch_size,
         backend=args.parser,
         progress=not args.no_progress,
+        filter_cmd=filter_cmd,
+        filename_label=args.filename_label,
     )
     try:
-        prototype.ingest_file(args.input, rdf_format=args.rdf_format)
+        input_path = Path(args.input)
+        if input_path.is_dir():
+            prototype.ingest_directory(
+                args.input,
+                rdf_format=args.rdf_format,
+                glob_pattern=args.glob,
+                filename_label_strip=args.filename_label_strip,
+            )
+        else:
+            prototype.ingest_file(args.input, rdf_format=args.rdf_format)
         prototype.build_facts()
         prototype.export_parquet(args.output)
         return 0
