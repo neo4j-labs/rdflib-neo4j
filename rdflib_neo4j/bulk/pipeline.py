@@ -765,6 +765,38 @@ class DuckDBBulkPrototype:
             GROUP BY nr.primary_label, pf.projected_property_name
             """
         )
+        if self.progress:
+            # Report distinct-property counts per label so the user can pick a sensible
+            # --max-properties-per-label value for the export step.
+            rows = self.connection.execute(
+                """
+                SELECT
+                    primary_label,
+                    count(DISTINCT projected_property_name) AS n_props
+                FROM node_property_profile
+                GROUP BY primary_label
+                ORDER BY n_props DESC
+                """
+            ).fetchall()
+            if rows:
+                counts = [r[1] for r in rows]
+                p50 = counts[len(counts) // 2]
+                p90 = counts[int(len(counts) * 0.10)]  # sorted DESC so 10% from top = p90
+                p99 = counts[int(len(counts) * 0.01)]
+                print(
+                    f"[prop-profile] {len(rows)} labels  "
+                    f"properties/label: max={counts[0]:,}  p99={p99:,}  p90={p90:,}  median={p50:,}",
+                    file=sys.stderr,
+                )
+                print("[prop-profile] top 15 labels by property count:", file=sys.stderr)
+                for label, n in rows[:15]:
+                    print(f"[prop-profile]   {n:>6,}  {label}", file=sys.stderr)
+                suggested = max(counts[min(9, len(counts) - 1)], 100)
+                print(
+                    f"[prop-profile] suggested --max-properties-per-label: {suggested:,}"
+                    f"  (top-10 label coverage)",
+                    file=sys.stderr,
+                )
 
     def profile_relationships(
         self,
