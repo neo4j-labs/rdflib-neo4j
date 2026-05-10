@@ -41,6 +41,9 @@ if __name__ == "__main__":
             "rdflib_neo4j.config",
             "rdflib_neo4j.query_composers",
         ],
+        package_data={
+            "rdflib_neo4j.bulk": ["*.json"],
+        },
         entry_points={
             'rdf.plugins.store': [
                 'neo4j-cypher = rdflib_neo4j.neo4jcypher:Neo4jStore',
