@@ -68,6 +68,8 @@ class DuckDBBulkPrototype:
         min_property_freq: int = 1,
         max_properties_per_label: int = 1000,
         label_map_file: Optional[str] = None,
+        export_workers: Optional[int] = None,
+        min_export_nodes: int = 0,
     ):
         self.db_path = db_path
         self.config = config or BulkImportConfig()
@@ -85,6 +87,10 @@ class DuckDBBulkPrototype:
         # When set, remap_labels() uses it to fix primary_label on an existing node_rows table.
         # Future: wire into _build_facts_sql so remapping happens at build time.
         self.label_map_file = label_map_file
+        # export_workers: None = auto (cpu_count), 1 = sequential.
+        # Parallel export opens read-only worker connections; not supported for :memory: DBs.
+        self.export_workers = export_workers
+        self.min_export_nodes = min_export_nodes
         self.connection = duckdb.connect(db_path)
         self.initialize()
 
@@ -1146,66 +1152,136 @@ class DuckDBBulkPrototype:
         (output_path / "nodes").mkdir(parents=True, exist_ok=True)
         (output_path / "relationships").mkdir(parents=True, exist_ok=True)
 
+    def _export_workers_count(self, n_tasks: int) -> int:
+        """Resolve effective worker count for parallel export.
+
+        :memory: DBs can't be shared across processes — fall back to 1.
+        Otherwise clamp to [1, n_tasks] so we don't spawn more workers than tasks.
+        """
+        if self.db_path == ":memory:":
+            return 1
+        if self.export_workers is not None:
+            n = self.export_workers
+        else:
+            # Default: cpu_count // 4. Each worker runs DuckDB's internal PIVOT which
+            # itself uses multiple threads, so over-committing workers causes contention.
+            # cpu_count // 4 gives 4 workers on a 16-core machine (each using ~4 threads).
+            n = max(1, (_os.cpu_count() or 4) // 4)
+        return max(1, min(n, n_tasks))
+
+    def _run_parallel_export(self, tasks, worker_fn, n_workers: int, label_for_log: str):
+        """Checkpoint, close the write connection, run workers, reopen the connection.
+
+        DuckDB does not allow opening a read-only connection to a file that already has
+        an open write connection in the same process. Closing the write connection first
+        releases the lock; read-only workers in separate processes can then connect.
+        The connection is always reopened in the finally block so subsequent pipeline
+        steps keep working.
+        """
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        self.connection.execute("CHECKPOINT")
+        self.connection.close()
+        try:
+            with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                futures = {executor.submit(worker_fn, *a): a[1] for a in tasks}
+                for fut in as_completed(futures):
+                    name, n = fut.result()
+                    if self.progress:
+                        print(f"[export]   {label_for_log}/{_safe_name(name)}.parquet  {n:,} rows", file=sys.stderr)
+        finally:
+            self.connection = duckdb.connect(self.db_path)
+
     def _write_node_parquet(self, nodes_dir: Path):
-        # Per-label PIVOT: a global PIVOT of all 194M nodes × all properties exhausted
+        # Per-label PIVOT: a global PIVOT of all nodes × all properties exhausted
         # 256 GiB temp space in testing. Pivoting one label at a time bounds peak memory
         # to the largest single label's property matrix, which is manageable.
         # preserve_insertion_order=false is required: DuckDB refuses to PIVOT large result
         # sets unless it can reorder rows internally for its hash-aggregate strategy.
         self.connection.execute("SET preserve_insertion_order=false")
 
-        labels = [
-            row[0]
-            for row in self.connection.execute(
-                "SELECT DISTINCT primary_label FROM node_rows ORDER BY primary_label"
+        # Pre-fetch node counts per label (one query) to filter tiny labels and
+        # avoid a separate count(*) query per label during the export loop.
+        label_counts: dict[str, int] = dict(
+            self.connection.execute(
+                "SELECT primary_label, count(*) FROM node_rows GROUP BY primary_label ORDER BY primary_label"
             ).fetchall()
-        ]
-        for label in labels:
-            target = nodes_dir / f"{_safe_name(label)}.parquet"
-            label_lit = _sql_literal(label)
-            has_props = self.connection.execute(
-                f"""
-                SELECT count(*)
-                FROM node_property_values
-                WHERE primary_label = {label_lit}
-                LIMIT 1
-                """
-            ).fetchone()[0]
+        )
+        if self.min_export_nodes > 0:
+            skipped = [(lbl, n) for lbl, n in label_counts.items() if n < self.min_export_nodes]
+            if skipped and self.progress:
+                print(
+                    f"[export] skipping {len(skipped)} labels with < {self.min_export_nodes:,} nodes:",
+                    file=sys.stderr,
+                )
+                for lbl, n in sorted(skipped, key=lambda x: x[1]):
+                    print(f"[export]   skip  {n:>8,}  {lbl}", file=sys.stderr)
+            label_counts = {lbl: n for lbl, n in label_counts.items() if n >= self.min_export_nodes}
+        labels = sorted(label_counts)
 
-            if has_props:
-                self.connection.execute(
-                    f"""
-                    COPY (
-                        WITH lp AS (
-                            SELECT uri, projected_property_name, value
-                            FROM node_property_values
-                            WHERE primary_label = {label_lit}
-                        ),
-                        piv AS (
-                            PIVOT lp ON projected_property_name USING first(value) GROUP BY uri
-                        )
-                        SELECT nr.uri, nr.primary_label, nr.labels, piv.* EXCLUDE(uri)
-                        FROM node_rows nr
-                        LEFT JOIN piv ON nr.uri = piv.uri
-                        WHERE nr.primary_label = {label_lit}
-                    ) TO {_sql_literal(str(target))} (FORMAT parquet, COMPRESSION ZSTD)
-                    """
-                )
-            else:
-                self.connection.execute(
-                    f"""
-                    COPY (
-                        SELECT uri, primary_label, labels
-                        FROM node_rows
-                        WHERE primary_label = {label_lit}
-                    ) TO {_sql_literal(str(target))} (FORMAT parquet, COMPRESSION ZSTD)
-                    """
-                )
-            if self.progress:
-                n = self.connection.execute(
-                    f"SELECT count(*) FROM node_rows WHERE primary_label = {label_lit}"
+        n_distinct = (
+            self.connection.execute(
+                "SELECT count(DISTINCT projected_property_name) FROM node_property_values"
+            ).fetchone()[0]
+            if _table_exists(self.connection, "node_property_values") else 0
+        )
+        pivot_limit = max(n_distinct + 100, 100_000)
+        n_workers = self._export_workers_count(len(labels))
+        threads_per_worker = max(1, (_os.cpu_count() or 1) // n_workers)
+
+        if self.progress:
+            print(
+                f"[export] writing {len(labels)} node label files"
+                + (f" with {n_workers} parallel workers" if n_workers > 1 else " (sequential)"),
+                file=sys.stderr,
+            )
+
+        if n_workers == 1:
+            # Sequential: use the existing connection so :memory: and single-file DBs work.
+            for label in labels:
+                label_lit = _sql_literal(label)
+                target_lit = _sql_literal(str(nodes_dir / f"{_safe_name(label)}.parquet"))
+                has_props = self.connection.execute(
+                    f"SELECT count(*) FROM node_property_values WHERE primary_label = {label_lit} LIMIT 1"
                 ).fetchone()[0]
-                print(f"[export]   nodes/{_safe_name(label)}.parquet  {n:,} rows", file=sys.stderr)
+                if has_props:
+                    self.connection.execute(
+                        f"""
+                        COPY (
+                            WITH lp AS (
+                                SELECT uri, projected_property_name, value
+                                FROM node_property_values
+                                WHERE primary_label = {label_lit}
+                            ),
+                            piv AS (
+                                PIVOT lp ON projected_property_name USING first(value) GROUP BY uri
+                            )
+                            SELECT nr.uri, nr.primary_label, nr.labels, piv.* EXCLUDE(uri)
+                            FROM node_rows nr
+                            LEFT JOIN piv ON nr.uri = piv.uri
+                            WHERE nr.primary_label = {label_lit}
+                        ) TO {target_lit} (FORMAT parquet, COMPRESSION ZSTD)
+                        """
+                    )
+                else:
+                    self.connection.execute(
+                        f"""
+                        COPY (
+                            SELECT uri, primary_label, labels
+                            FROM node_rows
+                            WHERE primary_label = {label_lit}
+                        ) TO {target_lit} (FORMAT parquet, COMPRESSION ZSTD)
+                        """
+                    )
+                if self.progress:
+                    print(f"[export]   nodes/{_safe_name(label)}.parquet  {label_counts[label]:,} rows", file=sys.stderr)
+        else:
+            # Parallel: close the write connection so workers can open read-only connections.
+            task_args = [
+                (self.db_path, label, str(nodes_dir / f"{_safe_name(label)}.parquet"),
+                 pivot_limit, threads_per_worker)
+                for label in labels
+            ]
+            self._run_parallel_export(task_args, _export_node_label, n_workers, "nodes")
 
     def _write_rel_parquet(self, rels_dir: Path):
         rel_types = [
@@ -1214,22 +1290,41 @@ class DuckDBBulkPrototype:
                 "SELECT DISTINCT rel_type FROM relationship_rows ORDER BY rel_type"
             ).fetchall()
         ]
-        for rel_type in rel_types:
-            target = rels_dir / f"{_safe_name(rel_type)}.parquet"
-            self.connection.execute(
-                f"""
-                COPY (
-                    SELECT source_uri, target_uri
-                    FROM relationship_rows
-                    WHERE rel_type = {_sql_literal(rel_type)}
-                ) TO {_sql_literal(str(target))} (FORMAT parquet, COMPRESSION ZSTD)
-                """
+        n_workers = self._export_workers_count(len(rel_types))
+        threads_per_worker = max(1, (_os.cpu_count() or 1) // n_workers)
+
+        if self.progress:
+            print(
+                f"[export] writing {len(rel_types)} relationship type files"
+                + (f" with {n_workers} parallel workers" if n_workers > 1 else " (sequential)"),
+                file=sys.stderr,
             )
-            if self.progress:
-                n = self.connection.execute(
-                    f"SELECT count(*) FROM relationship_rows WHERE rel_type = {_sql_literal(rel_type)}"
-                ).fetchone()[0]
-                print(f"[export]   relationships/{_safe_name(rel_type)}.parquet  {n:,} rows", file=sys.stderr)
+
+        if n_workers == 1:
+            for rel_type in rel_types:
+                rel_lit = _sql_literal(rel_type)
+                target_lit = _sql_literal(str(rels_dir / f"{_safe_name(rel_type)}.parquet"))
+                self.connection.execute(
+                    f"""
+                    COPY (
+                        SELECT source_uri, target_uri
+                        FROM relationship_rows
+                        WHERE rel_type = {rel_lit}
+                    ) TO {target_lit} (FORMAT parquet, COMPRESSION ZSTD)
+                    """
+                )
+                if self.progress:
+                    n = self.connection.execute(
+                        f"SELECT count(*) FROM relationship_rows WHERE rel_type = {rel_lit}"
+                    ).fetchone()[0]
+                    print(f"[export]   relationships/{_safe_name(rel_type)}.parquet  {n:,} rows", file=sys.stderr)
+        else:
+            task_args = [
+                (self.db_path, rel_type, str(rels_dir / f"{_safe_name(rel_type)}.parquet"),
+                 threads_per_worker)
+                for rel_type in rel_types
+            ]
+            self._run_parallel_export(task_args, _export_rel_type, n_workers, "relationships")
 
     def counts(self):
         tables = [
@@ -1441,6 +1536,86 @@ def _safe_name(value: str) -> str:
 
 def _sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _export_node_label(db_path: str, label: str, target: str, pivot_limit: int, threads: int) -> tuple[str, int]:
+    """Worker: open DB read-only, PIVOT-COPY one label to Parquet, return row count.
+
+    Module-level so it is picklable by ProcessPoolExecutor. DuckDB's SWMR model
+    allows multiple read-only connections while the main write connection is open,
+    as long as the data has been CHECKPOINTed beforehand.
+    """
+    import duckdb as _ddb
+    con = _ddb.connect(db_path, read_only=True)
+    try:
+        con.execute(f"SET threads={threads}")
+        con.execute(f"SET pivot_limit={pivot_limit}")
+        con.execute("SET preserve_insertion_order=false")
+        label_lit = _sql_literal(label)
+        target_lit = _sql_literal(target)
+        has_props = con.execute(
+            f"SELECT count(*) FROM node_property_values WHERE primary_label = {label_lit} LIMIT 1"
+        ).fetchone()[0]
+        if has_props:
+            con.execute(
+                f"""
+                COPY (
+                    WITH lp AS (
+                        SELECT uri, projected_property_name, value
+                        FROM node_property_values
+                        WHERE primary_label = {label_lit}
+                    ),
+                    piv AS (
+                        PIVOT lp ON projected_property_name USING first(value) GROUP BY uri
+                    )
+                    SELECT nr.uri, nr.primary_label, nr.labels, piv.* EXCLUDE(uri)
+                    FROM node_rows nr
+                    LEFT JOIN piv ON nr.uri = piv.uri
+                    WHERE nr.primary_label = {label_lit}
+                ) TO {target_lit} (FORMAT parquet, COMPRESSION ZSTD)
+                """
+            )
+        else:
+            con.execute(
+                f"""
+                COPY (
+                    SELECT uri, primary_label, labels
+                    FROM node_rows
+                    WHERE primary_label = {label_lit}
+                ) TO {target_lit} (FORMAT parquet, COMPRESSION ZSTD)
+                """
+            )
+        n = con.execute(
+            f"SELECT count(*) FROM node_rows WHERE primary_label = {label_lit}"
+        ).fetchone()[0]
+        return label, n
+    finally:
+        con.close()
+
+
+def _export_rel_type(db_path: str, rel_type: str, target: str, threads: int) -> tuple[str, int]:
+    """Worker: open DB read-only, COPY one rel type to Parquet, return row count."""
+    import duckdb as _ddb
+    con = _ddb.connect(db_path, read_only=True)
+    try:
+        con.execute(f"SET threads={threads}")
+        rel_lit = _sql_literal(rel_type)
+        target_lit = _sql_literal(target)
+        con.execute(
+            f"""
+            COPY (
+                SELECT source_uri, target_uri
+                FROM relationship_rows
+                WHERE rel_type = {rel_lit}
+            ) TO {target_lit} (FORMAT parquet, COMPRESSION ZSTD)
+            """
+        )
+        n = con.execute(
+            f"SELECT count(*) FROM relationship_rows WHERE rel_type = {rel_lit}"
+        ).fetchone()[0]
+        return rel_type, n
+    finally:
+        con.close()
 
 
 def _table_exists(connection, table_name: str) -> bool:

@@ -88,6 +88,30 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
+        "--export-workers",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Number of parallel worker processes for Parquet export (default: cpu_count//4). "
+            "Each worker opens the DB read-only and PIVOT-COPYs its assigned labels/rel-types "
+            "concurrently. Each worker still uses DuckDB's internal thread pool, so don't set "
+            "this too high. Use 1 for sequential export. Not supported for --db :memory:."
+        ),
+    )
+    parser.add_argument(
+        "--min-export-nodes",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Minimum node count for a label to be included in the Parquet export. "
+            "Default: 0 (export all labels). Use e.g. 1000 to skip tiny fallback labels "
+            "(Kp_lw, Engineering, Chess, ...) that result from domain-prefix extraction "
+            "during analyze. Skipped labels are logged with their node counts."
+        ),
+    )
+    parser.add_argument(
         "--temp-dir",
         default=None,
         help="Directory for parallel worker temp Parquet chunks (default: system temp). "
@@ -312,6 +336,8 @@ def main(argv=None):
         min_property_freq=args.min_property_freq,
         max_properties_per_label=args.max_properties_per_label,
         label_map_file=args.label_map_file,
+        export_workers=args.export_workers,
+        min_export_nodes=args.min_export_nodes,
     )
     stage = args.stage
     try:
