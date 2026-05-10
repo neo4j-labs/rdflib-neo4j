@@ -898,9 +898,12 @@ rdflib-neo4j-bulk-prototype /Users/mh/d/data/rdf/Affymetrix \
     --parser duckdb_rdf \
     --filename-label \
     --filename-label-strip ".na32.annot" \
-    --filter-cmd 'ag -v "(^<bio2rdf_dataset:|<[^>]*\|[^>]*>|<[^>]* [^>]*>|<[^>]*`[^>]*>)"' \
+    --filter-cmd 'ag -v "^<bio2rdf_dataset:" | ag -v "<[^>]*[| `][^>]*>"' \
     --output /tmp/affymetrix-out
 ```
+
+The two-filter chain: first drops the invalid `bio2rdf_dataset:` scheme; second drops any IRI containing
+pipe `|`, space, or backtick `` ` `` (all invalid per RFC 3986, all present in bio2rdf data).
 
 Label strip `.na32.annot` converts `HG-U133_Plus_2.na32.annot` → `HG-U133_Plus_2` as the Neo4j label.
 
@@ -971,6 +974,13 @@ rdflib-neo4j-bulk-prototype \
 
 Expected: Freebase uses clean Freebase IRIs — no filter likely needed. Estimated ~2–3 hours for ingestion.
 
-**Observed**: Python process runs at 100% CPU during ingestion — DuckDB/serd is the bottleneck, not I/O.
-This suggests the duckdb_rdf extension's serd parser is single-threaded and CPU-bound for large uncompressed streams.
-TODO: profile with `py-spy top` to identify hot path and investigate whether DuckDB parallel reads or chunked ingestion can help.
+**Observed**: Python process runs at 100% CPU during ingestion — serd's single-threaded C parser is the bottleneck.
+The parser runs flat-out on 30 GB of data; this is expected behaviour, not a Python overhead issue.
+
+**Named-FIFO bypass not possible**: serd requires `SeekPosition` (for EOF detection) which kernel pipes/FIFOs
+don't implement. The Python virtual FS (`DecompressingFS`) works because it fake-implements seek by returning
+a monotonically increasing byte offset. Python GIL overhead is negligible: `read()` releases the GIL during
+the kernel `read(2)` syscall, so the bottleneck is the subprocess decompressor + serd, not Python.
+
+TODO: investigate multi-threaded ingestion by splitting `.gz` into chunks with `pigz --block` or ingesting
+multiple files in parallel when the input is a directory.

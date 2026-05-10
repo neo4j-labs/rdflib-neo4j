@@ -382,9 +382,11 @@ class _DecompressFile:
         src_stdout = p1.stdout
 
         if filter_cmd:
+            # shell=True so the user can pipe multiple commands:
+            # e.g. "ag -v pat1 | ag -v pat2"
             p2 = subprocess.Popen(
                 filter_cmd, stdin=src_stdout, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, shell=True,
             )
             if comp_ext:
                 src_stdout.close()  # let upstream receive SIGPIPE if p2 exits
@@ -572,9 +574,12 @@ def ingest_duckdb_rdf(
 
     if comp_ext or filter_cmd:
         # Use the decomp:// virtual FS whenever decompression or filtering is needed.
-        # The virtual path carries the RDF extension serd needs (.ttl, .xml …).
-        # Reuse a single DecompressingFS per connection — DuckDB only allows one
-        # registration per protocol name.
+        # Named FIFOs don't work here: serd requires SeekPosition which pipes don't support.
+        # The Python virtual FS fake-implements seek (returns monotonic byte offset) which
+        # satisfies serd's EOF detection without actual backward seeking.
+        # GIL note: DuckDB calls our read() via the C extension, acquiring the GIL per chunk.
+        # The real work (subprocess pipe read) releases the GIL during the kernel system call,
+        # so throughput is bounded by the decompressor + serd parser, not Python overhead.
         virtual = f"/{_os.path.basename(base_path)}"
         if rdf_ext == "xml" and not virtual.endswith((".xml", ".rdf")):
             virtual = _os.path.splitext(virtual)[0] + ".xml"

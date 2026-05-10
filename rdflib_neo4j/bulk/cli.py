@@ -69,10 +69,10 @@ def main(argv=None):
         "--filter-cmd",
         help=(
             "Shell command piped after the decompressor (duckdb_rdf only). "
+            "Executed via /bin/sh so pipes work: e.g. 'ag -v pat1 | ag -v pat2'. "
             "Use ag (Silver Searcher) for speed. "
-            "Example for YAGO/Wikipedia datasets (drops backslash IRIs and "
-            "3-letter language tags that crash serd): "
-            """'ag -v "(<[^>]*\\\\[^>]*>|\"@[a-z]{3}[ .])"'"""
+            "Example for Affymetrix bio2rdf (drops invalid IRI lines): "
+            r"""'ag -v "^<bio2rdf_dataset:" | ag -v "<[^>]*[| `][^>]*>"'"""
         ),
     )
     args = parser.parse_args(argv)
@@ -88,8 +88,7 @@ def main(argv=None):
         language_projection=args.language_projection,
         language_filter=args.language_filter,
     )
-    import shlex
-    filter_cmd = shlex.split(args.filter_cmd) if args.filter_cmd else None
+    filter_cmd = args.filter_cmd if args.filter_cmd else None
 
     prototype = DuckDBBulkPrototype(
         db_path=db_path,
