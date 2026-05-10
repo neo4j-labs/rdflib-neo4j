@@ -936,6 +936,14 @@ def ingest_duckdb_rdf_split_file(
     effective_fmt = fmt_key or ext
     line_formats = {"nt", "ntriples", "n-triples", "nq", "nquads", "n-quads"}
     if effective_fmt not in line_formats:
+        if not effective_fmt and comp_ext:
+            # Compressed file with no recognised inner extension and no --format given.
+            # Example: freebase-rdf-latest.gz — inner stem has no .nt extension.
+            raise ValueError(
+                f"Cannot determine RDF format for '{path}': compressed file has no recognised "
+                f"extension after stripping '.{comp_ext}'. Pass --format nt (or nquads/turtle) "
+                f"to specify the format explicitly."
+            )
         if progress:
             print(
                 f"[split] {effective_fmt!r} is not line-oriented; using sequential ingest",
