@@ -975,12 +975,23 @@ rdflib-neo4j-bulk-prototype \
 Expected: Freebase uses clean Freebase IRIs — no filter likely needed. Estimated ~2–3 hours for ingestion.
 
 **Observed**: Python process runs at 100% CPU during ingestion — serd's single-threaded C parser is the bottleneck.
-The parser runs flat-out on 30 GB of data; this is expected behaviour, not a Python overhead issue.
+The parser runs flat-out on 30 GB of data; this is expected behaviour.
 
 **Named-FIFO bypass not possible**: serd requires `SeekPosition` (for EOF detection) which kernel pipes/FIFOs
-don't implement. The Python virtual FS (`DecompressingFS`) works because it fake-implements seek by returning
-a monotonically increasing byte offset. Python GIL overhead is negligible: `read()` releases the GIL during
-the kernel `read(2)` syscall, so the bottleneck is the subprocess decompressor + serd, not Python.
+don't implement. The Python virtual FS (`DecompressingFS`) fake-implements seek by returning a monotonically
+increasing byte offset — this satisfies serd without actual backward seeking.
 
-TODO: investigate multi-threaded ingestion by splitting `.gz` into chunks with `pigz --block` or ingesting
-multiple files in parallel when the input is a directory.
+**GIL / chunk-size profiling result**: DuckDB requests 4 KB chunks, causing ~30M Python read() calls for Freebase.
+Increasing the read-ahead buffer to 1 MB reduces subprocess pipe reads 250×.
+Benchmark on ChEBI OWL (60 MB gz, 8.8M triples): **1.35M triples/s buffered vs 1.0M/s unbuffered (+35%)**.
+Benchmark on synthetic NT (5.3 MB gz, 1M triples): 1.71M vs 1.81M/s (noise — already in pigz/serd range).
+The 1 MB read-ahead buffer is now the default in `_DecompressFile`.
+
+**Most promising speedup**: parallel ingestion via file splitting.
+```bash
+# Decompress and split Freebase into 500M-line chunks, ingest each concurrently
+pigz -dc freebase-rdf-latest.gz | split -l 500000000 - /tmp/fb_chunk_ --additional-suffix=.nt
+# Then ingest all chunks as a directory with --parser duckdb_rdf
+```
+TODO: implement multi-process parallel ingestion in `ingest_directory()` (each file in a subprocess
+writing into the same DuckDB file, using DuckDB's multi-writer WAL mode).

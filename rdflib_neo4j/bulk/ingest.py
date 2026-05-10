@@ -396,9 +396,35 @@ class _DecompressFile:
             self._stdout = src_stdout
         self._pos = 0
         self._closed = False
+        # 1 MB read-ahead buffer: DuckDB reads in 4 KB chunks so without buffering
+        # we make 250× more subprocess pipe reads than necessary.  The large buffer
+        # amortises the GIL-releasing kernel read() call to once per MB.
+        self._buf = b""
+        self._buf_pos = 0
+        self._READ_AHEAD = 1 << 20  # 1 MB
 
     def read(self, n: int = -1) -> bytes:
-        data = self._stdout.read(n) if n >= 0 else self._stdout.read()
+        if n < 0:
+            # Unbounded read — drain buffer then pipe.
+            tail = self._stdout.read()
+            data = self._buf[self._buf_pos:] + tail
+            self._buf = b""
+            self._buf_pos = 0
+            self._pos += len(data)
+            return data
+
+        available = len(self._buf) - self._buf_pos
+        if available < n:
+            # Refill buffer: pull at least READ_AHEAD bytes from pipe.
+            chunk = self._stdout.read(self._READ_AHEAD)
+            if chunk:
+                self._buf = self._buf[self._buf_pos:] + chunk
+            else:
+                self._buf = self._buf[self._buf_pos:]
+            self._buf_pos = 0
+
+        data = self._buf[self._buf_pos : self._buf_pos + n]
+        self._buf_pos += len(data)
         self._pos += len(data)
         return data
 
