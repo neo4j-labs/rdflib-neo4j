@@ -1,10 +1,13 @@
 import json
 from pathlib import Path
 
+import duckdb
+import pytest
 from rdflib import BNode, Literal, RDF, URIRef, XSD
 
 from rdflib_neo4j.bulk import AggregationMode, BulkImportConfig, DuckDBBulkPrototype
 from rdflib_neo4j.bulk.cli import main as bulk_cli
+from rdflib_neo4j.bulk.ingest import ingest
 
 
 EX = "http://example.com/"
@@ -152,3 +155,106 @@ def test_cli_exports_fixture_file(tmp_path):
     assert Path(output, "relationships", "knows.parquet").exists()
     graph_config = json.loads(Path(output, "metadata", "graph_config.json").read_text())
     assert graph_config["handleVocabUris"] == "IGNORE"
+
+
+# ---------------------------------------------------------------------------
+# Tests for the oxigraph streaming backend
+# ---------------------------------------------------------------------------
+
+_TURTLE_FIXTURE = """\
+@prefix ex: <http://example.com/> .
+
+ex:alice a ex:Person ;
+    ex:name "Alice"@en ;
+    ex:age 42 ;
+    ex:knows ex:bob .
+
+ex:bob a ex:Person ;
+    ex:name "Bob" .
+"""
+
+_RDFXML_FIXTURE = """\
+<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:ex="http://example.com/">
+  <ex:Person rdf:about="http://example.com/alice">
+    <ex:name xml:lang="en">Alice</ex:name>
+    <ex:age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">42</ex:age>
+    <ex:knows rdf:resource="http://example.com/bob"/>
+  </ex:Person>
+</rdf:RDF>
+"""
+
+
+def _make_staging(tmp_path, suffix=".duckdb"):
+    conn = duckdb.connect(str(tmp_path / f"staging{suffix}"))
+    conn.execute("""
+        CREATE TABLE rdf_triples (
+            source_order UBIGINT,
+            subject VARCHAR NOT NULL,
+            predicate VARCHAR NOT NULL,
+            object_kind VARCHAR NOT NULL,
+            object_value VARCHAR NOT NULL,
+            datatype VARCHAR,
+            lang VARCHAR
+        )
+    """)
+    return conn
+
+
+@pytest.mark.parametrize("backend", ["rdflib", "oxigraph"])
+def test_oxigraph_turtle_streaming(tmp_path, backend):
+    fixture = tmp_path / "fixture.ttl"
+    fixture.write_text(_TURTLE_FIXTURE, encoding="utf-8")
+    conn = _make_staging(tmp_path)
+    try:
+        count = ingest(str(fixture), "turtle", conn, backend=backend, batch_size=10, progress=False)
+        # 2 rdf:type + 2 ex:name (alice@en, bob plain) + 1 ex:age + 1 ex:knows = 6
+        assert count == 6
+        rows = conn.execute(
+            "SELECT object_kind, object_value, lang FROM rdf_triples "
+            "WHERE predicate = 'http://example.com/name'"
+        ).fetchall()
+        assert len(rows) == 2
+        alice_name = next(r for r in rows if r[2] == "en")
+        assert alice_name[0] == "literal"
+        assert alice_name[1] == "Alice"
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("backend", ["rdflib", "oxigraph"])
+def test_oxigraph_rdfxml_streaming(tmp_path, backend):
+    fixture = tmp_path / "fixture.rdf"
+    fixture.write_text(_RDFXML_FIXTURE, encoding="utf-8")
+    conn = _make_staging(tmp_path)
+    try:
+        count = ingest(str(fixture), "xml", conn, backend=backend, batch_size=10, progress=False)
+        # 1 rdf:type + 1 name@en + 1 age + 1 knows = 4 triples
+        assert count == 4
+        # Verify iri/bnode/literal split
+        kinds = {r[0] for r in conn.execute(
+            "SELECT object_kind FROM rdf_triples WHERE predicate = 'http://example.com/knows'"
+        ).fetchall()}
+        assert kinds == {"iri"}
+        age_row = conn.execute(
+            "SELECT object_value, datatype FROM rdf_triples "
+            "WHERE predicate = 'http://example.com/age'"
+        ).fetchone()
+        assert age_row[0] == "42"
+        assert "integer" in age_row[1]
+    finally:
+        conn.close()
+
+
+def test_cli_oxigraph_backend(tmp_path):
+    fixture = tmp_path / "fixture.ttl"
+    fixture.write_text(_TURTLE_FIXTURE, encoding="utf-8")
+    output = tmp_path / "out"
+    result = bulk_cli([
+        str(fixture), "--format", "turtle", "--output", str(output),
+        "--parser", "oxigraph", "--no-progress",
+    ])
+    assert result == 0
+    assert Path(output, "nodes", "Person.parquet").exists()
+    assert Path(output, "relationships", "knows.parquet").exists()

@@ -1,5 +1,7 @@
 import json
 import re
+import sys
+import time
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -7,6 +9,7 @@ import duckdb
 from rdflib import Graph, RDF
 
 from rdflib_neo4j.bulk.config import AggregationMode, BulkImportConfig
+from rdflib_neo4j.bulk.ingest import BACKENDS, ingest
 from rdflib_neo4j.bulk.mapping import choose_primary_label, mapped_term, projected_property_name
 from rdflib_neo4j.bulk.terms import object_parts, resource_id
 
@@ -16,11 +19,15 @@ class DuckDBBulkPrototype:
         self,
         db_path: str = ":memory:",
         config: Optional[BulkImportConfig] = None,
-        batch_size: int = 10000,
+        batch_size: int = 100_000,
+        backend: str = "rdflib",
+        progress: bool = True,
     ):
         self.db_path = db_path
         self.config = config or BulkImportConfig()
         self.batch_size = batch_size
+        self.backend = backend
+        self.progress = progress
         self.connection = duckdb.connect(db_path)
         self.initialize()
 
@@ -43,9 +50,15 @@ class DuckDBBulkPrototype:
         )
 
     def ingest_file(self, path: str, rdf_format: Optional[str] = None) -> int:
-        graph = Graph()
-        graph.parse(path, format=rdf_format)
-        return self.ingest_triples(graph)
+        """Stream *path* into the staging table using the configured backend."""
+        return ingest(
+            path,
+            rdf_format,
+            self.connection,
+            backend=self.backend,
+            batch_size=self.batch_size,
+            progress=self.progress,
+        )
 
     def ingest_triples(self, triples: Iterable) -> int:
         rows = []
@@ -73,7 +86,136 @@ class DuckDBBulkPrototype:
         return total
 
     def build_facts(self):
+        """Build projection fact tables from staged triples.
+
+        Uses pure DuckDB SQL for IGNORE/KEEP strategies so no rows cross the
+        Python boundary.  Falls back to the Python loop only when custom
+        mappings or SHORTEN/MAP strategies are in use.
+        """
+        from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY
+        if self.config.handle_vocab_uri_strategy in (
+            HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+            HANDLE_VOCAB_URI_STRATEGY.KEEP,
+        ) and not self.config.custom_mappings:
+            self._build_facts_sql()
+        else:
+            self._build_facts_python()
+
+    def _build_facts_sql(self):
+        """All-SQL projection — no Python per-row work, no fetchall."""
+        from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY
+
+        if self.progress:
+            print("[project] building fact tables (SQL)...", file=sys.stderr, flush=True)
+        t0 = time.monotonic()
+
+        keep = self.config.handle_vocab_uri_strategy == HANDLE_VOCAB_URI_STRATEGY.KEEP
+        generic = ", ".join(f"'{g}'" for g in self.config.generic_labels)
+        rdf_type = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+
+        if keep:
+            map_term = "predicate"
+            map_obj  = "object_value"
+        else:
+            # IGNORE: local name after last # or /
+            map_term = "regexp_replace(predicate, '^.*[/#]', '')"
+            map_obj  = "regexp_replace(object_value, '^.*[/#]', '')"
+
+        lang_filter = self.config.language_filter
+        lang_filter_clause = (
+            f"AND (lang IS NULL OR lang = '{lang_filter}')" if lang_filter else ""
+        )
+
+        if self.config.language_projection:
+            proj_name = f"CASE WHEN lang IS NOT NULL THEN {map_term} || '_' || replace(lang, '-', '_') ELSE {map_term} END"
+        else:
+            proj_name = map_term
+
         self._create_fact_tables()
+
+        # ---- node_labels (mapped rdf:type values) ----
+        self.connection.execute(f"""
+            INSERT INTO node_labels
+            SELECT DISTINCT subject, {map_obj}
+            FROM rdf_triples
+            WHERE predicate = '{rdf_type}'
+              AND object_kind IN ('iri', 'bnode')
+        """)
+
+        # ---- node_rows (one per resource, primary_label + labels array) ----
+        # resources = subjects ∪ non-literal, non-type objects
+        self.connection.execute(f"""
+            INSERT INTO node_rows
+            WITH all_uris AS (
+                SELECT DISTINCT subject AS uri FROM rdf_triples
+                UNION
+                SELECT DISTINCT object_value AS uri
+                FROM rdf_triples
+                WHERE object_kind IN ('iri', 'bnode')
+                  AND predicate != '{rdf_type}'
+            )
+            SELECT
+                r.uri,
+                COALESCE(
+                    MIN(CASE WHEN nl.label NOT IN ({generic}) THEN nl.label END),
+                    'Resource'
+                ) AS primary_label,
+                list_prepend('Resource', coalesce(
+                    list(DISTINCT nl.label ORDER BY nl.label), []
+                )) AS labels
+            FROM all_uris r
+            LEFT JOIN node_labels nl ON r.uri = nl.uri
+            GROUP BY r.uri
+        """)
+
+        # ---- property_facts (literal objects, not rdf:type) ----
+        self.connection.execute(f"""
+            INSERT INTO property_facts
+            SELECT
+                subject,
+                {map_term} AS property_name,
+                {proj_name} AS projected_property_name,
+                object_value,
+                datatype,
+                lang,
+                source_order
+            FROM rdf_triples
+            WHERE object_kind = 'literal'
+              AND predicate != '{rdf_type}'
+              {lang_filter_clause}
+        """)
+
+        # ---- relationship_facts (IRI/bnode objects, not rdf:type) ----
+        self.connection.execute(f"""
+            INSERT INTO relationship_facts
+            SELECT
+                subject,
+                {map_term} AS rel_type,
+                object_value,
+                source_order
+            FROM rdf_triples
+            WHERE object_kind IN ('iri', 'bnode')
+              AND predicate != '{rdf_type}'
+        """)
+
+        if self.progress:
+            c = self.connection
+            n_nodes = c.execute("SELECT count(*) FROM node_rows").fetchone()[0]
+            n_props = c.execute("SELECT count(*) FROM property_facts").fetchone()[0]
+            n_rels  = c.execute("SELECT count(*) FROM relationship_facts").fetchone()[0]
+            elapsed = time.monotonic() - t0
+            print(
+                f"[project] {n_nodes:,} nodes  {n_props:,} props  "
+                f"{n_rels:,} rels  {elapsed:.1f}s",
+                file=sys.stderr,
+            )
+
+    def _build_facts_python(self):
+        """Python-loop projection for SHORTEN/MAP strategies with custom mappings."""
+        self._create_fact_tables()
+        if self.progress:
+            print("[project] building fact tables (Python)...", file=sys.stderr)
+        t0 = time.monotonic()
         rows = self.connection.execute(
             "SELECT source_order, subject, predicate, object_kind, object_value, datatype, lang FROM rdf_triples"
         ).fetchall()
@@ -96,24 +238,11 @@ class DuckDBBulkPrototype:
                 projected_name = projected_property_name(property_name, lang, self.config)
                 if projected_name:
                     property_rows.append(
-                        (
-                            subject,
-                            property_name,
-                            projected_name,
-                            str(object_value),
-                            datatype,
-                            lang,
-                            source_order,
-                        )
+                        (subject, property_name, projected_name, str(object_value), datatype, lang, source_order)
                     )
             else:
                 relationship_rows.append(
-                    (
-                        subject,
-                        mapped_term(predicate, self.config),
-                        object_value,
-                        source_order,
-                    )
+                    (subject, mapped_term(predicate, self.config), object_value, source_order)
                 )
 
         node_rows = []
@@ -134,6 +263,13 @@ class DuckDBBulkPrototype:
             self.connection.executemany("INSERT INTO property_facts VALUES (?, ?, ?, ?, ?, ?, ?)", property_rows)
         if relationship_rows:
             self.connection.executemany("INSERT INTO relationship_facts VALUES (?, ?, ?, ?)", relationship_rows)
+        if self.progress:
+            elapsed = time.monotonic() - t0
+            print(
+                f"[project] {len(node_rows):,} nodes  {len(property_rows):,} props  "
+                f"{len(relationship_rows):,} rels  {elapsed:.1f}s",
+                file=sys.stderr,
+            )
 
     def profile_properties(self):
         self.connection.execute(
@@ -181,6 +317,9 @@ class DuckDBBulkPrototype:
             self.connection.execute("CREATE OR REPLACE TABLE nodes_wide AS SELECT * FROM node_rows")
 
     def export_parquet(self, output_dir: str):
+        if self.progress:
+            print("[export] pivoting nodes and projecting Parquet...", file=sys.stderr)
+        t0 = time.monotonic()
         self.pivot_nodes()
         self.deduplicate_relationships()
         output_path = Path(output_dir)
@@ -207,6 +346,11 @@ class DuckDBBulkPrototype:
                 ) TO {_sql_literal(str(target))} (FORMAT parquet)
                 """
             )
+            if self.progress:
+                n = self.connection.execute(
+                    f"SELECT count(*) FROM nodes_wide WHERE primary_label = {_sql_literal(label)}"
+                ).fetchone()[0]
+                print(f"[export]   nodes/{_safe_name(label)}.parquet  {n:,} rows", file=sys.stderr)
 
         rel_types = [
             row[0]
@@ -225,6 +369,14 @@ class DuckDBBulkPrototype:
                 ) TO {_sql_literal(str(target))} (FORMAT parquet)
                 """
             )
+            if self.progress:
+                n = self.connection.execute(
+                    f"SELECT count(*) FROM relationship_rows WHERE rel_type = {_sql_literal(rel_type)}"
+                ).fetchone()[0]
+                print(f"[export]   relationships/{_safe_name(rel_type)}.parquet  {n:,} rows", file=sys.stderr)
+
+        if self.progress:
+            print(f"[export] done  {time.monotonic() - t0:.1f}s", file=sys.stderr)
 
     def counts(self):
         tables = [

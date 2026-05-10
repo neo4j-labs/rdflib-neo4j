@@ -33,7 +33,7 @@ if __name__ == "__main__":
         platforms="All",
         url="https://github.com/neo4j-labs/rdflib-neo4j",
         install_requires=[
-            'rdflib >= 7.0.0', 'neo4j >= 5.0.0', 'duckdb >= 1.0.0',
+            'rdflib >= 7.0.0', 'neo4j-rust-ext == 6.2.0.0', 'duckdb == 1.5.2',
         ],
         packages=[
             "rdflib_neo4j",

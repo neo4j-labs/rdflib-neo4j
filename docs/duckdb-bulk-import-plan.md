@@ -229,6 +229,16 @@ First implementation path:
 - Keep the sink limited to producing the same staged schema as native ingesters.
 - Avoid embedding rdflib-specific term objects past the staging boundary.
 
+Current prototype caveat:
+
+- `DuckDBBulkPrototype.ingest_file()` still calls `Graph.parse()` first, then
+  inserts triples into DuckDB. This materializes the RDFLib graph in memory and
+  is not the intended streaming sink shape.
+- Add regular progress output for parse/stage/project/export phases, including
+  triples processed every 10k or 100k rows, elapsed time, and throughput.
+- Replace `Graph.parse()` materialization with a true streaming parser/sink or a
+  native concurrent parser plus DuckDB appender.
+
 Exit criteria:
 
 - Small fixtures match rdflib-neo4j / n10s-compatible expected output.
@@ -566,6 +576,54 @@ out/
     <rel_type>.parquet
 ```
 
+## Running the Prototype
+
+Run the current rdflib-backed correctness prototype from the DuckDB worktree:
+
+```bash
+cd /Users/mh/d/python/rdflib-neo4j/.claude/worktrees/duckdb-bulk-import-experiment
+
+python3 -m rdflib_neo4j.bulk.cli path/to/file.ttl \
+  --format turtle \
+  --output /tmp/duckdb-bulk-out
+```
+
+If the package has been installed and the console script is available, the same
+pipeline can be run as:
+
+```bash
+rdflib-neo4j-bulk-prototype path/to/file.ttl \
+  --format turtle \
+  --output /tmp/duckdb-bulk-out
+```
+
+For the ChEBI RDF/XML benchmark target:
+
+```bash
+python3 -m rdflib_neo4j.bulk.cli /Users/mh/d/java/neo/neosemantics/testdata/chebi.owl \
+  --format xml \
+  --output /tmp/chebi-bulk-out
+```
+
+The prototype writes:
+
+- `metadata/graph_config.json`
+- `metadata/prefixes.json`
+- `metadata/counts.json`
+- `metadata/primary_label_explain.parquet`
+- `nodes/<primary_label>.parquet`
+- `relationships/<rel_type>.parquet`
+
+Quick local validation:
+
+```bash
+python3 -m pytest test/bulk -q -p no:cacheprovider
+```
+
+This path is still the rdflib-backed correctness prototype. It is useful for
+fixture validation and end-to-end output checks, but large RDF/XML files such as
+ChEBI may run slowly until the native ingestion path is implemented.
+
 ## Validation Plan
 
 Small fixtures:
@@ -596,6 +654,47 @@ Neo4j import validation:
   supported.
 - Validate sample resources against n10s import output.
 
+## ChEBI Baseline
+
+Baseline run on May 10, 2026:
+
+```bash
+env UV_CACHE_DIR=/private/tmp/uv-cache /usr/bin/time -lp \
+  uv run --python /opt/homebrew/bin/python3.13 \
+    --with 'rdflib==7.0.0' \
+    --with 'duckdb==1.5.2' \
+    --with 'neo4j-rust-ext==6.2.0.0' \
+    python -m rdflib_neo4j.bulk.cli \
+      /Users/mh/d/java/neo/neosemantics/testdata/chebi.owl \
+      --format xml \
+      --output /private/tmp/chebi-bulk-baseline-duckdb152-run1
+```
+
+Observed result:
+
+- Input: `chebi.owl`, 774.4 MB RDF/XML.
+- Runtime: 2669.42 seconds, about 44 minutes 29 seconds.
+- CPU: 3204.84 user seconds + 750.25 sys seconds, about 148% CPU.
+- Max RSS: 17,655,955,456 bytes, about 16.4 GiB.
+- Output size: 235 MB.
+- Staged triples: 8,825,356.
+- Node rows: 1,217,372.
+- Property facts: 4,750,708.
+- Relationship facts: 2,857,565.
+- Deduplicated relationship rows: 2,857,565.
+
+Interpretation:
+
+- This is a poor but useful baseline. It proves the projection pipeline can
+  complete on ChEBI, but memory use is dominated by RDFLib `Graph.parse()`
+  materializing the RDF/XML graph before DuckDB insertion.
+- A streaming or native parser should be an easy improvement target for both
+  runtime and memory.
+- The benchmark needs progress logging so long runs report phase timing,
+  triples processed, throughput, and output counts while they run.
+- Also evaluate whether the same native/concurrent parser wrapper should be
+  usable by rdflib-neo4j generally, not only by the bulk import prototype.
+
 ## Work Packages
 
 1. Planning artifact and CLI skeleton.
@@ -607,17 +706,23 @@ Neo4j import validation:
    - DuckDB `rdf` extension.
    - Rust `oxrdfio` prototype if needed.
    - rdflib fallback for correctness.
-4. Config model for n10s-compatible mapping options.
-5. Raw triple staging contract with required term-kind, datatype, language, and
+4. Add prototype progress logging:
+   - Parse/stage/project/export phase timing.
+   - Triples processed every 10k or 100k rows.
+   - Throughput, memory, and output counts.
+5. Investigate a reusable native/concurrent RDF parser wrapper for both bulk
+   import and rdflib-neo4j write paths.
+6. Config model for n10s-compatible mapping options.
+7. Raw triple staging contract with required term-kind, datatype, language, and
    graph fields. `source_order` is optional and required only for strict
    stream-order modes.
-6. URI mapping, prefix handling, literal coercion, and bnode conversion.
-7. Label extraction and primary-label heuristic.
-8. Node property aggregation and Parquet/header export.
-9. Relationship aggregation and Parquet/header export.
-10. Import command generation for Neo4j Enterprise `2026.04.0`.
-11. Small fixture tests.
-12. ChEBI benchmark script and result report.
+8. URI mapping, prefix handling, literal coercion, and bnode conversion.
+9. Label extraction and primary-label heuristic.
+10. Node property aggregation and Parquet/header export.
+11. Relationship aggregation and Parquet/header export.
+12. Import command generation for Neo4j Enterprise `2026.04.0`.
+13. Small fixture tests.
+14. ChEBI benchmark script and result report.
 
 ## Open Risks
 
