@@ -984,19 +984,28 @@ def ingest_duckdb_rdf_split_file(
                     f"No decompressor found for .{comp_ext} files. "
                     f"Install one of: {[c[0] for c in _DECOMPRESSORS[comp_ext]]}"
                 )
+            # BSD split (macOS) does not support `split -n N -` from stdin because it
+            # cannot seek to determine the total size. Use `split -b SIZE` instead,
+            # deriving SIZE from the compressed file size (a lower-bound approximation;
+            # the actual uncompressed chunks will be larger but the NT-validity filter
+            # handles any boundary fragments regardless of chunk size).
+            file_size = os.path.getsize(path)
+            chunk_bytes = max(1, file_size // n_workers)
             p1 = subprocess.Popen(
                 decomp_cmd + [path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
             )
-            p2 = subprocess.run(
-                ["split", "-n", str(n_workers), "-", chunk_prefix],
+            subprocess.run(
+                ["split", "-b", str(chunk_bytes), "-", chunk_prefix],
                 stdin=p1.stdout,
                 stderr=subprocess.DEVNULL,
             )
             p1.stdout.close()
             p1.wait()
         else:
+            file_size = os.path.getsize(path)
+            chunk_bytes = max(1, file_size // n_workers)
             subprocess.run(
-                ["split", "-n", str(n_workers), path, chunk_prefix],
+                ["split", "-b", str(chunk_bytes), path, chunk_prefix],
                 check=True,
                 stderr=subprocess.DEVNULL,
             )
