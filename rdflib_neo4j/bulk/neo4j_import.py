@@ -225,14 +225,24 @@ def run_neo4j_import(
     parquet_path = Path(parquet_dir)
     neo4j_dir = parquet_path / "neo4j"
 
-    # Auto-detect neo4j-admin
+    # Auto-detect neo4j-admin:
+    #   1. PATH lookup  (covers standalone installs, Linux packages, Homebrew)
+    #   2. $NEO4J_HOME/bin/neo4j-admin  (common when Neo4j is unpacked from a tarball)
+    #   3. Common well-known locations as a last resort
     if neo4j_admin is None:
+        import os as _os
         neo4j_admin = shutil.which("neo4j-admin")
         if neo4j_admin is None:
+            neo4j_home = _os.environ.get("NEO4J_HOME")
+            if neo4j_home:
+                candidate = Path(neo4j_home) / "bin" / "neo4j-admin"
+                if candidate.exists():
+                    neo4j_admin = str(candidate)
+        if neo4j_admin is None:
             for candidate in [
-                "/Users/mh/v/neo4j-enterprise-2026.04.0/bin/neo4j-admin",
                 "/usr/local/bin/neo4j-admin",
                 "/opt/homebrew/bin/neo4j-admin",
+                "/usr/bin/neo4j-admin",
             ]:
                 if Path(candidate).exists():
                     neo4j_admin = candidate
