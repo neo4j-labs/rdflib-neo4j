@@ -225,7 +225,6 @@ def run_neo4j_import(
     if neo4j_admin is None:
         neo4j_admin = shutil.which("neo4j-admin")
         if neo4j_admin is None:
-            # Common install locations
             for candidate in [
                 "/Users/mh/v/neo4j-enterprise-2026.04.0/bin/neo4j-admin",
                 "/usr/local/bin/neo4j-admin",
@@ -234,13 +233,13 @@ def run_neo4j_import(
                 if Path(candidate).exists():
                     neo4j_admin = candidate
                     break
-        if neo4j_admin is None:
-            print(
-                "[neo4j-import] ERROR: neo4j-admin not found. "
-                "Set --neo4j-admin to the binary path.",
-                file=sys.stderr,
-            )
-            return 1
+    if neo4j_admin is None:
+        print(
+            "[neo4j-import] ERROR: neo4j-admin not found. "
+            "Set --neo4j-admin to the binary path.",
+            file=sys.stderr,
+        )
+        return 1
 
     t0 = time.monotonic()
     node_entries, rel_entries = prepare_import_files(

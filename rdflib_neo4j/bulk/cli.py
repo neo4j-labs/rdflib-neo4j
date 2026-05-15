@@ -1,4 +1,5 @@
 import argparse
+import shlex
 import sys
 from pathlib import Path
 
@@ -7,6 +8,23 @@ from rdflib_neo4j.bulk.ingest import BACKENDS
 from rdflib_neo4j.bulk.neo4j_import import run_neo4j_import
 from rdflib_neo4j.bulk.pipeline import DuckDBBulkPrototype
 from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY
+
+
+def _print_neo4j_import_hint(args) -> None:
+    """Print the --stage neo4j-import CLI invocation the user can copy and run."""
+    cmd = [sys.executable, "-m", "rdflib_neo4j.bulk.cli",
+           "--stage", "neo4j-import",
+           "--output", args.output,
+           "--database", args.database]
+    if args.neo4j_admin:
+        cmd += ["--neo4j-admin", args.neo4j_admin]
+    if args.no_progress:
+        cmd.append("--no-progress")
+    print(
+        "\n# To import into Neo4j, run:\n"
+        + "  " + " \\\n  ".join(shlex.quote(p) for p in cmd),
+        file=sys.stderr,
+    )
 
 
 def main(argv=None):
@@ -440,6 +458,7 @@ def main(argv=None):
 
         if stage in ("all", "export"):
             prototype.export_parquet(args.output)
+            _print_neo4j_import_hint(args)
         elif stage == "export-nodes":
             prototype.export_nodes(args.output)
         elif stage == "export-rels":
