@@ -661,3 +661,144 @@ def test_analyze_requires_db_when_no_output(tmp_path):
     with pytest.raises(SystemExit) as exc_info:
         bulk_cli(["--stage", "analyze"])
     assert exc_info.value.code != 0
+
+
+# ---------------------------------------------------------------------------
+# subClassOf ancestor label tests
+# ---------------------------------------------------------------------------
+
+RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+OWL_NS = "http://www.w3.org/2002/07/owl#"
+
+
+def _subclass_uri(name):
+    return URIRef(f"http://example.com/onto/{name}")
+
+
+def _setup_ontology_prototype(min_subclass_label_coverage=0.0):
+    """
+    Small ontology:
+      Chemical (owl:Class)
+        └── Flavonoid (owl:Class, rdfs:label "flavonoid", subClassOf Chemical)
+              └── Quercetin (owl:Class, rdfs:label "quercetin", subClassOf Flavonoid)
+    """
+    from rdflib import RDFS as rRDFS
+    prototype = DuckDBBulkPrototype(
+        config=BulkImportConfig(),
+        subclass_label_depth=5,
+        min_subclass_label_coverage=min_subclass_label_coverage,
+    )
+    SUB = URIRef(f"{RDFS}subClassOf")
+    LABEL = URIRef(f"{RDFS}label")
+
+    prototype.ingest_triples([
+        # rdf:type — all are owl:Class
+        (_subclass_uri("Chemical"),  RDF.type, URIRef(f"{OWL_NS}Class")),
+        (_subclass_uri("Flavonoid"), RDF.type, URIRef(f"{OWL_NS}Class")),
+        (_subclass_uri("Quercetin"), RDF.type, URIRef(f"{OWL_NS}Class")),
+        # rdfs:label
+        (_subclass_uri("Chemical"),  LABEL, Literal("chemical entity")),
+        (_subclass_uri("Flavonoid"), LABEL, Literal("flavonoid")),
+        (_subclass_uri("Quercetin"), LABEL, Literal("quercetin")),
+        # rdfs:subClassOf hierarchy
+        (_subclass_uri("Flavonoid"), SUB, _subclass_uri("Chemical")),
+        (_subclass_uri("Quercetin"), SUB, _subclass_uri("Flavonoid")),
+    ])
+    prototype.build_facts()
+    return prototype
+
+
+def test_build_subclass_labels_creates_table():
+    """build_subclass_labels() creates node_subclass_labels with ancestor labels."""
+    prototype = _setup_ontology_prototype(min_subclass_label_coverage=0.0)
+    try:
+        prototype.remap_labels(label_map_file=None, min_label_coverage=0.0)
+        n = prototype.build_subclass_labels()
+        assert n > 0, "Expected subClassOf triples to be found"
+
+        rows = prototype.connection.execute(
+            "SELECT uri, extra_labels FROM node_subclass_labels ORDER BY uri"
+        ).fetchall()
+        by_uri = {r[0]: r[1] for r in rows}
+
+        # Quercetin should have both "flavonoid" and "chemical entity" as ancestors
+        quercetin_uri = str(_subclass_uri("Quercetin"))
+        assert quercetin_uri in by_uri
+        assert "flavonoid" in by_uri[quercetin_uri]
+        assert "chemical entity" in by_uri[quercetin_uri]
+
+        # Flavonoid should have "chemical entity" as ancestor
+        flavonoid_uri = str(_subclass_uri("Flavonoid"))
+        assert flavonoid_uri in by_uri
+        assert "chemical entity" in by_uri[flavonoid_uri]
+    finally:
+        prototype.close()
+
+
+def test_build_subclass_labels_skips_when_disabled():
+    """`subclass_labels=False` skips the step even when subClassOf triples exist."""
+    prototype = _setup_ontology_prototype()
+    prototype.subclass_labels = False
+    try:
+        prototype.remap_labels(label_map_file=None, min_label_coverage=0.0)
+        n = prototype.build_subclass_labels()
+        assert n == 0
+        from rdflib_neo4j.bulk.pipeline import _table_exists
+        assert not _table_exists(prototype.connection, "node_subclass_labels")
+    finally:
+        prototype.close()
+
+
+def test_build_subclass_labels_skips_when_no_subclass_triples():
+    """Datasets without subClassOf silently skip without error."""
+    prototype = DuckDBBulkPrototype(config=BulkImportConfig())
+    try:
+        prototype.ingest_triples([
+            (uri("alice"), RDF.type, uri("Person")),
+            (uri("alice"), uri("knows"), uri("bob")),
+            (uri("bob"),  RDF.type, uri("Person")),
+        ])
+        prototype.build_facts()
+        prototype.remap_labels(label_map_file=None, min_label_coverage=0.0)
+        n = prototype.build_subclass_labels()
+        assert n == 0
+    finally:
+        prototype.close()
+
+
+def test_subclass_labels_appear_in_exported_parquet(tmp_path):
+    """:LABEL column in exported Parquet contains primary + ancestor labels."""
+    prototype = _setup_ontology_prototype(min_subclass_label_coverage=0.0)
+    try:
+        prototype.remap_labels(label_map_file=None, min_label_coverage=0.0)
+        prototype.profile_properties()
+        prototype.profile_relationships(min_rel_coverage=0.0)
+        prototype.build_subclass_labels()
+        prototype.export_parquet(str(tmp_path))
+    finally:
+        prototype.close()
+
+    # Read one of the exported node Parquet files
+    import duckdb as _ddb
+    con = _ddb.connect(":memory:")
+    parquet_files = list((tmp_path / "nodes").glob("*.parquet"))
+    assert parquet_files, "No node Parquet files exported"
+
+    for pf in parquet_files:
+        cols = [r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{pf}')").fetchall()]
+        assert ":LABEL" in cols, f":LABEL column missing from {pf.name}"
+
+    # Quercetin node should have flavonoid in its :LABEL
+    quercetin_uri = str(_subclass_uri("Quercetin"))
+    for pf in parquet_files:
+        row = con.execute(
+            f"SELECT \"{':LABEL'}\" FROM read_parquet('{pf}') WHERE uri = ?",
+            [quercetin_uri],
+        ).fetchone()
+        if row:
+            label_str = row[0]
+            assert "flavonoid" in label_str, f"Expected 'flavonoid' in :LABEL, got: {label_str!r}"
+            assert "chemical entity" in label_str
+            break
+    else:
+        pytest.fail(f"Quercetin node not found in any exported Parquet")

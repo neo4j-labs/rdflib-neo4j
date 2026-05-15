@@ -238,6 +238,39 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
+        "--no-subclass-labels",
+        action="store_true",
+        help=(
+            "Disable automatic subClassOf ancestor label assignment. By default, when "
+            "rdfs:subClassOf triples are detected the pipeline computes each node's ancestor "
+            "classes and writes them as a :LABEL column in the node Parquet files so "
+            "neo4j-admin assigns multiple labels at import time (e.g. Chemical;flavonoid;peptide)."
+        ),
+    )
+    parser.add_argument(
+        "--subclass-label-depth",
+        type=int,
+        default=5,
+        metavar="N",
+        help=(
+            "Maximum number of rdfs:subClassOf hops to walk when building ancestor labels. "
+            "Default: 5. Use -1 for unlimited depth (may be slow on deep ontologies). "
+            "Has no effect when --no-subclass-labels is set."
+        ),
+    )
+    parser.add_argument(
+        "--min-subclass-label-coverage",
+        type=float,
+        default=0.001,
+        metavar="F",
+        help=(
+            "Minimum fraction of total nodes that must have a class as a direct subClassOf "
+            "child for it to be used as an ancestor label candidate. Default: 0.001 (0.1%%). "
+            "Lower → more ancestor labels; higher → only broad categories. "
+            "Has no effect when --no-subclass-labels is set."
+        ),
+    )
+    parser.add_argument(
         "--compact-db",
         default=None,
         metavar="PATH",
@@ -341,6 +374,9 @@ def main(argv=None):
         label_map_file=args.label_map_file,
         export_workers=args.export_workers,
         min_export_nodes=args.min_export_nodes,
+        subclass_labels=not args.no_subclass_labels,
+        subclass_label_depth=args.subclass_label_depth,
+        min_subclass_label_coverage=args.min_subclass_label_coverage,
     )
     stage = args.stage
     try:
@@ -371,6 +407,7 @@ def main(argv=None):
                 dedup_inverse_pairs=not args.no_dedup_inverse_pairs,
                 ensure_rel_per_label=args.ensure_rel_per_label,
             )
+            prototype.build_subclass_labels()
 
         if stage in ("all", "export"):
             prototype.export_parquet(args.output)

@@ -23,6 +23,8 @@ def _prop_cols(con: duckdb.DuckDBPyConnection, path: str) -> list[str]:
     # filename (e.g. Person.parquet → --nodes=Person=...), not as a data column. `labels` (the
     # full raw RDF type array) is omitted here and preserved in the export Parquet for post-import
     # label materialisation via Cypher (e.g. CALL apoc.create.addLabels).
+    # `:LABEL` (when present) is intentionally kept — neo4j-admin reads it as per-row
+    # multi-label assignment (primary + subClassOf ancestors, semicolon-separated).
     return [c for c in cols if c not in ("uri", "primary_label", "labels")]
 
 

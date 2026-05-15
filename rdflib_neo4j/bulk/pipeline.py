@@ -72,6 +72,9 @@ class DuckDBBulkPrototype:
         label_map_file: Optional[str] = None,
         export_workers: Optional[int] = None,
         min_export_nodes: int = 0,
+        subclass_labels: bool = True,
+        subclass_label_depth: int = 5,
+        min_subclass_label_coverage: float = 0.001,
     ):
         self.db_path = db_path
         self.config = config or BulkImportConfig()
@@ -93,6 +96,11 @@ class DuckDBBulkPrototype:
         # Parallel export opens read-only worker connections; not supported for :memory: DBs.
         self.export_workers = export_workers
         self.min_export_nodes = min_export_nodes
+        # subclass_labels: when True (default) automatically detect rdfs:subClassOf triples
+        # and use them as extra Neo4j labels on each node (stored in a :LABEL column).
+        self.subclass_labels = subclass_labels
+        self.subclass_label_depth = subclass_label_depth
+        self.min_subclass_label_coverage = min_subclass_label_coverage
         self.connection = duckdb.connect(db_path)
         self._apply_duckdb_settings()
         self.initialize()
@@ -853,6 +861,145 @@ class DuckDBBulkPrototype:
                     file=sys.stderr,
                 )
 
+    def build_subclass_labels(self) -> int:
+        """Compute rdfs:subClassOf ancestor labels per node and store in node_subclass_labels.
+
+        Auto-detects whether subClassOf triples exist in relationship_facts; skips silently
+        when none are found (e.g. Freebase-style datasets). When found, computes transitive
+        closure up to self.subclass_label_depth hops, retains only ancestor classes whose
+        direct child count meets the coverage threshold, and stores the result as a
+        node_subclass_labels table.  The export step JOINs this table to add a ":LABEL"
+        column to node Parquet files so neo4j-admin assigns multiple labels at import time.
+
+        Returns the number of subClassOf triples found (0 when skipped).
+        """
+        if not self.subclass_labels:
+            return 0
+
+        t0 = time.monotonic()
+
+        n_subclass = self.connection.execute(
+            "SELECT count(*) FROM relationship_facts WHERE rel_type = 'subClassOf'"
+        ).fetchone()[0]
+
+        if n_subclass == 0:
+            if self.progress:
+                print(
+                    "[subclass-labels] no subClassOf triples in relationship_facts — skipping",
+                    file=sys.stderr,
+                )
+            return 0
+
+        depth = self.subclass_label_depth
+        total_nodes = self.connection.execute("SELECT count(*) FROM node_rows").fetchone()[0]
+        threshold = max(int(total_nodes * self.min_subclass_label_coverage), 1)
+
+        if self.progress:
+            print(
+                f"[subclass-labels] {n_subclass:,} subClassOf triples found"
+                f"  depth={'unlimited' if depth <= 0 else depth}"
+                f"  coverage_threshold={threshold:,} direct children{_mem_stat()}",
+                file=sys.stderr,
+            )
+
+        # Candidate ancestors: subClassOf targets with enough direct children to be
+        # meaningful label categories. Filters out leaf-level classes and near-root
+        # mega-classes that add noise rather than useful type information.
+        self.connection.execute(
+            f"""
+            CREATE OR REPLACE TEMP TABLE _subclass_candidates AS
+            SELECT rf.target_uri AS uri
+            FROM relationship_facts rf
+            WHERE rf.rel_type = 'subClassOf'
+              AND NOT rf.target_uri LIKE '_:%'
+            GROUP BY rf.target_uri
+            HAVING count(DISTINCT rf.source_uri) >= {threshold}
+            """
+        )
+        n_candidates = self.connection.execute(
+            "SELECT count(*) FROM _subclass_candidates"
+        ).fetchone()[0]
+
+        if n_candidates == 0:
+            self.connection.execute("DROP TABLE IF EXISTS _subclass_candidates")
+            if self.progress:
+                print(
+                    f"[subclass-labels] no ancestor classes meet coverage threshold"
+                    f" (≥{threshold:,} direct children) — skipping",
+                    file=sys.stderr,
+                )
+            return n_subclass
+
+        if self.progress:
+            print(
+                f"[subclass-labels] {n_candidates:,} ancestor label candidates"
+                f" (≥{threshold:,} direct children)",
+                file=sys.stderr,
+            )
+
+        # Transitive closure via recursive CTE bounded by depth_limit.
+        # UNION ALL + depth guard: faster than UNION (dedup) for acyclic ontologies.
+        # OWL ontologies should be acyclic in subClassOf; depth cap is the safety net.
+        depth_guard = f"AND a.depth < {depth}" if depth > 0 else ""
+        self.connection.execute(
+            f"""
+            CREATE OR REPLACE TABLE node_subclass_labels AS
+            WITH RECURSIVE anc(uri, ancestor_uri, depth) AS (
+                SELECT source_uri, target_uri, 1
+                FROM relationship_facts
+                WHERE rel_type = 'subClassOf'
+                  AND NOT target_uri LIKE '_:%'
+                UNION ALL
+                SELECT a.uri, rf.target_uri, a.depth + 1
+                FROM anc a
+                JOIN relationship_facts rf ON rf.source_uri = a.ancestor_uri
+                WHERE rf.rel_type = 'subClassOf'
+                  AND NOT rf.target_uri LIKE '_:%'
+                  {depth_guard}
+            )
+            SELECT
+                a.uri,
+                list(DISTINCT pf.value ORDER BY pf.value) AS extra_labels
+            FROM anc a
+            JOIN _subclass_candidates sc ON sc.uri = a.ancestor_uri
+            JOIN property_facts pf
+                ON pf.uri = a.ancestor_uri
+               AND pf.projected_property_name = 'label'
+            GROUP BY a.uri
+            """
+        )
+        self.connection.execute("DROP TABLE IF EXISTS _subclass_candidates")
+        self.connection.execute("CHECKPOINT")
+
+        n_labeled = self.connection.execute(
+            "SELECT count(*) FROM node_subclass_labels"
+        ).fetchone()[0]
+
+        if self.progress:
+            avg_row = self.connection.execute(
+                "SELECT avg(len(extra_labels)) FROM node_subclass_labels"
+            ).fetchone()
+            avg = avg_row[0] if avg_row and avg_row[0] else 0.0
+            # Show a sample of the most-used extra labels
+            top = self.connection.execute(
+                """
+                SELECT lbl, count(*) AS n
+                FROM (SELECT unnest(extra_labels) AS lbl FROM node_subclass_labels)
+                GROUP BY lbl ORDER BY n DESC LIMIT 10
+                """
+            ).fetchall()
+            print(
+                f"[subclass-labels] {n_labeled:,} nodes assigned extra labels"
+                f"  avg={avg:.1f}/node  {time.monotonic() - t0:.1f}s{_mem_stat()}",
+                file=sys.stderr,
+            )
+            if top:
+                print("[subclass-labels] top 10 extra labels:", file=sys.stderr)
+                for lbl, n in top:
+                    print(f"[subclass-labels]   {n:>8,}  {lbl}", file=sys.stderr)
+
+        return n_subclass
+
     def profile_relationships(
         self,
         rel_map_file: Optional[str] = None,
@@ -1319,6 +1466,8 @@ class DuckDBBulkPrototype:
                 file=sys.stderr,
             )
 
+        has_subclass = _table_exists(self.connection, "node_subclass_labels")
+
         if n_workers == 1:
             # Sequential: use the existing connection so :memory: and single-file DBs work.
             for label in labels:
@@ -1327,6 +1476,19 @@ class DuckDBBulkPrototype:
                 has_props = self.connection.execute(
                     f"SELECT count(*) FROM node_property_values WHERE primary_label = {label_lit} LIMIT 1"
                 ).fetchone()[0]
+                # :LABEL column: primary_label alone, or primary_label + semicolon-joined
+                # subClassOf ancestor labels when node_subclass_labels table exists.
+                label_col = (
+                    f"CASE WHEN sl.extra_labels IS NOT NULL"
+                    f" THEN {label_lit} || ';' || list_aggregate(sl.extra_labels, 'string_agg', ';')"
+                    f" ELSE {label_lit} END AS \":LABEL\""
+                    if has_subclass
+                    else f"{label_lit} AS \":LABEL\""
+                )
+                subclass_join = (
+                    f"LEFT JOIN node_subclass_labels sl ON sl.uri = nr.uri"
+                    if has_subclass else ""
+                )
                 if has_props:
                     self.connection.execute(
                         f"""
@@ -1339,9 +1501,11 @@ class DuckDBBulkPrototype:
                             piv AS (
                                 PIVOT lp ON projected_property_name USING first(value) GROUP BY uri
                             )
-                            SELECT nr.uri, nr.primary_label, nr.labels, piv.* EXCLUDE(uri)
+                            SELECT nr.uri, nr.primary_label, nr.labels, {label_col},
+                                   piv.* EXCLUDE(uri)
                             FROM node_rows nr
                             LEFT JOIN piv ON nr.uri = piv.uri
+                            {subclass_join}
                             WHERE nr.primary_label = {label_lit}
                         ) TO {target_lit} (FORMAT parquet, COMPRESSION ZSTD)
                         """
@@ -1350,9 +1514,10 @@ class DuckDBBulkPrototype:
                     self.connection.execute(
                         f"""
                         COPY (
-                            SELECT uri, primary_label, labels
-                            FROM node_rows
-                            WHERE primary_label = {label_lit}
+                            SELECT nr.uri, nr.primary_label, nr.labels, {label_col}
+                            FROM node_rows nr
+                            {subclass_join}
+                            WHERE nr.primary_label = {label_lit}
                         ) TO {target_lit} (FORMAT parquet, COMPRESSION ZSTD)
                         """
                     )
@@ -1362,7 +1527,7 @@ class DuckDBBulkPrototype:
             # Parallel: close the write connection so workers can open read-only connections.
             task_args = [
                 (self.db_path, label, str(nodes_dir / f"{_safe_name(label)}.parquet"),
-                 pivot_limit, threads_per_worker)
+                 pivot_limit, threads_per_worker, has_subclass)
                 for label in labels
             ]
             self._run_parallel_export(task_args, _export_node_label, n_workers, "nodes")
@@ -1659,7 +1824,10 @@ def _sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def _export_node_label(db_path: str, label: str, target: str, pivot_limit: int, threads: int) -> tuple[str, int]:
+def _export_node_label(
+    db_path: str, label: str, target: str, pivot_limit: int, threads: int,
+    has_subclass: bool = False,
+) -> tuple[str, int]:
     """Worker: open DB read-only, PIVOT-COPY one label to Parquet, return row count.
 
     Module-level so it is picklable by ProcessPoolExecutor. DuckDB's SWMR model
@@ -1677,6 +1845,15 @@ def _export_node_label(db_path: str, label: str, target: str, pivot_limit: int, 
         has_props = con.execute(
             f"SELECT count(*) FROM node_property_values WHERE primary_label = {label_lit} LIMIT 1"
         ).fetchone()[0]
+        # :LABEL column: primary label alone, or combined with subClassOf ancestor labels
+        label_col = (
+            f"CASE WHEN sl.extra_labels IS NOT NULL"
+            f" THEN {label_lit} || ';' || list_aggregate(sl.extra_labels, 'string_agg', ';')"
+            f" ELSE {label_lit} END AS \":LABEL\""
+            if has_subclass
+            else f"{label_lit} AS \":LABEL\""
+        )
+        subclass_join = "LEFT JOIN node_subclass_labels sl ON sl.uri = nr.uri" if has_subclass else ""
         if has_props:
             con.execute(
                 f"""
@@ -1689,9 +1866,11 @@ def _export_node_label(db_path: str, label: str, target: str, pivot_limit: int, 
                     piv AS (
                         PIVOT lp ON projected_property_name USING first(value) GROUP BY uri
                     )
-                    SELECT nr.uri, nr.primary_label, nr.labels, piv.* EXCLUDE(uri)
+                    SELECT nr.uri, nr.primary_label, nr.labels, {label_col},
+                           piv.* EXCLUDE(uri)
                     FROM node_rows nr
                     LEFT JOIN piv ON nr.uri = piv.uri
+                    {subclass_join}
                     WHERE nr.primary_label = {label_lit}
                 ) TO {target_lit} (FORMAT parquet, COMPRESSION ZSTD)
                 """
@@ -1700,9 +1879,10 @@ def _export_node_label(db_path: str, label: str, target: str, pivot_limit: int, 
             con.execute(
                 f"""
                 COPY (
-                    SELECT uri, primary_label, labels
-                    FROM node_rows
-                    WHERE primary_label = {label_lit}
+                    SELECT nr.uri, nr.primary_label, nr.labels, {label_col}
+                    FROM node_rows nr
+                    {subclass_join}
+                    WHERE nr.primary_label = {label_lit}
                 ) TO {target_lit} (FORMAT parquet, COMPRESSION ZSTD)
                 """
             )
