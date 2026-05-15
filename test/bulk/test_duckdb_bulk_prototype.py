@@ -149,7 +149,7 @@ def test_cli_exports_fixture_file(tmp_path):
         encoding="utf-8",
     )
 
-    assert bulk_cli([str(fixture), "--format", "turtle", "--output", str(output)]) == 0
+    assert bulk_cli([str(fixture), "--format", "turtle", "--output", str(output), "--dry-run"]) == 0
 
     assert Path(output, "nodes", "Person.parquet").exists()
     assert Path(output, "relationships", "knows.parquet").exists()
@@ -253,7 +253,7 @@ def test_cli_oxigraph_backend(tmp_path):
     output = tmp_path / "out"
     result = bulk_cli([
         str(fixture), "--format", "turtle", "--output", str(output),
-        "--parser", "oxigraph", "--no-progress",
+        "--parser", "oxigraph", "--no-progress", "--dry-run",
     ])
     assert result == 0
     assert Path(output, "nodes", "Person.parquet").exists()
@@ -409,13 +409,14 @@ def test_remap_labels_via_cli(tmp_path):
     )
     output = tmp_path / "out"
 
-    # Ingest + build (not export)
+    # Ingest + build + analyze + export + neo4j-import dry-run (no live DB needed in tests)
     result = bulk_cli([
         str(fixture), "--format", "turtle",
         "--output", str(output),
         "--db", db_path,
         "--stage", "all",
         "--no-progress",
+        "--dry-run",
     ])
     assert result == 0
 

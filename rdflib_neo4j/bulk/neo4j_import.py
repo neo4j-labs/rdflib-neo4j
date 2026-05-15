@@ -209,6 +209,7 @@ def run_neo4j_import(
     rows_per_file: int = _NO_SPLIT,
     dry_run: bool = False,
     progress: bool = True,
+    optional: bool = False,
 ) -> int:
     """
     Full neo4j import flow: rewrite Parquet columns, build the admin command, optionally execute.
@@ -217,6 +218,9 @@ def run_neo4j_import(
     Large files (> rows_per_file rows) are split into parallel chunks so neo4j-admin
     can use multiple import workers per label/type.
     Returns the neo4j-admin exit code (0 on dry-run).
+
+    When optional=True (used by --stage all), a missing neo4j-admin binary is not an
+    error — the function prints the manual import hint and returns 0.
     """
     parquet_path = Path(parquet_dir)
     neo4j_dir = parquet_path / "neo4j"
@@ -234,6 +238,13 @@ def run_neo4j_import(
                     neo4j_admin = candidate
                     break
     if neo4j_admin is None:
+        if optional:
+            print(
+                "[neo4j-import] neo4j-admin not found — skipping import.\n"
+                "  Install neo4j-admin or set --neo4j-admin to run the import manually.",
+                file=sys.stderr,
+            )
+            return 0
         print(
             "[neo4j-import] ERROR: neo4j-admin not found. "
             "Set --neo4j-admin to the binary path.",

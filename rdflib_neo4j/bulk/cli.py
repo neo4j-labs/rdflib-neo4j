@@ -182,7 +182,7 @@ def main(argv=None):
         ],
         default="all",
         help=(
-            "Pipeline stage to run (default: all = ingest→build→analyze→export). "
+            "Pipeline stage to run (default: all = ingest→build→analyze→export→neo4j-import). "
             "'ingest' — load RDF into staging DB only; "
             "'build' — build fact tables (node_rows, property_facts, relationship_facts); "
             "'analyze' — remap labels (smart coverage-based) + profile properties; "
@@ -458,13 +458,15 @@ def main(argv=None):
 
         if stage in ("all", "export"):
             prototype.export_parquet(args.output)
-            _print_neo4j_import_hint(args)
+            if stage == "export":
+                # Only print the hint when stopping here; "all" continues to import below.
+                _print_neo4j_import_hint(args)
         elif stage == "export-nodes":
             prototype.export_nodes(args.output)
         elif stage == "export-rels":
             prototype.export_relationships(args.output)
 
-        if stage == "neo4j-import":
+        if stage in ("all", "neo4j-import"):
             prototype.close()  # release DB lock before running neo4j-admin
             return run_neo4j_import(
                 parquet_dir=args.output,
@@ -476,6 +478,8 @@ def main(argv=None):
                 rows_per_file=args.rows_per_file,
                 dry_run=args.dry_run,
                 progress=not args.no_progress,
+                # In "all" mode a missing admin binary is non-fatal — just print the hint.
+                optional=(stage == "all"),
             )
 
         if stage == "compact":
