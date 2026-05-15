@@ -543,13 +543,16 @@ class DuckDBBulkPrototype:
         self,
         label_map_file: Optional[str] = None,
         min_label_coverage: float = 0.001,
+        target_label_count: Optional[int] = None,
     ) -> None:
         """Re-derive primary_label from node_rows.labels using coverage-based selection.
 
         Works on an already-built DB without re-ingesting.  Algorithm:
           1. Compute global label frequency (how many nodes carry each label).
           2. Exclude ontology/meta labels (built-in list + optional file overrides).
-          3. Threshold = max(total_nodes * min_label_coverage, 100).
+          3. Threshold = max(total_nodes * min_label_coverage, 1).
+             When target_label_count is set, threshold is instead derived from the
+             actual frequency distribution so approximately N non-excluded labels survive.
           4. For each node: pick the *most specific* (lowest global freq) non-excluded
              label that meets the threshold.  Apply canonical rename map.
           5. If no label meets the threshold, fall back to the most specific
@@ -564,6 +567,11 @@ class DuckDBBulkPrototype:
                 globally to be considered as a primary-label candidate.
                 Default 0.001 (0.1 %).  Lower → more specific labels;
                 higher → fewer, coarser labels.
+            target_label_count: If set, overrides min_label_coverage. The pipeline
+                inspects the actual frequency distribution of non-excluded labels
+                and picks the threshold that retains approximately this many distinct
+                labels (the Nth most common frequency). Useful when you want ~50 or
+                ~100 labels without computing a fraction manually.
         """
         # ------------------------------------------------------------------ #
         # Step 1: collect all distinct labels from the DB                    #
@@ -580,9 +588,13 @@ class DuckDBBulkPrototype:
             if row[0] is not None
         ]
         if self.progress:
+            target_str = (
+                f"target={target_label_count} labels"
+                if target_label_count is not None
+                else f"coverage threshold={min_label_coverage:.3%}"
+            )
             print(
-                f"[remap] {len(all_labels):,} distinct labels found, "
-                f"coverage threshold={min_label_coverage:.3%}",
+                f"[remap] {len(all_labels):,} distinct labels found, {target_str}",
                 file=sys.stderr, flush=True,
             )
 
@@ -661,17 +673,46 @@ class DuckDBBulkPrototype:
         # Step 4: compute global label frequencies + threshold               #
         # ------------------------------------------------------------------ #
         total_nodes = self.connection.execute("SELECT count(*) FROM node_rows").fetchone()[0]
-        # Raw Freebase types are compound (e.g. american_football.football_player) and
-        # there are 16,000+ of them. Without a coverage threshold all become separate
-        # node files, causing PIVOT failures. The threshold (~total * 0.001) selects
-        # ~100 labels that cover most nodes; rarer labels fall back to domain extraction.
-        # Floor of 1 so single-node test DBs still work.
-        threshold = max(int(total_nodes * min_label_coverage), 1)
-        if self.progress:
-            print(
-                f"[remap] total nodes={total_nodes:,}, threshold={threshold:,} nodes",
-                file=sys.stderr, flush=True,
-            )
+
+        if target_label_count is not None:
+            # Derive threshold from the actual non-excluded label frequency distribution
+            # so that approximately target_label_count distinct labels survive.
+            # Sort non-excluded labels by node-count descending; the Nth entry's count
+            # becomes the threshold. Ties mean the result may be slightly above N.
+            label_freqs = self.connection.execute(
+                """
+                SELECT lbl, count(*) AS n
+                FROM (SELECT unnest(labels) AS lbl FROM node_rows WHERE labels IS NOT NULL)
+                WHERE lbl IS NOT NULL
+                GROUP BY lbl ORDER BY n DESC
+                """
+            ).fetchall()
+            non_excluded = [
+                (lbl, n) for lbl, n in label_freqs
+                if lbl not in resolved_excludes
+            ]
+            if len(non_excluded) <= target_label_count:
+                threshold = 1
+            else:
+                threshold = non_excluded[target_label_count - 1][1]
+            threshold = max(threshold, 1)
+            if self.progress:
+                print(
+                    f"[remap] total nodes={total_nodes:,}, "
+                    f"target={target_label_count} labels → threshold={threshold:,} nodes",
+                    file=sys.stderr, flush=True,
+                )
+        else:
+            # Raw Freebase types are compound (e.g. american_football.football_player) and
+            # there are 16,000+ of them. Without a coverage threshold all become separate
+            # node files, causing PIVOT failures. The threshold (~total * 0.001) selects
+            # ~100 labels that cover most nodes; rarer labels fall back to domain extraction.
+            threshold = max(int(total_nodes * min_label_coverage), 1)
+            if self.progress:
+                print(
+                    f"[remap] total nodes={total_nodes:,}, threshold={threshold:,} nodes",
+                    file=sys.stderr, flush=True,
+                )
 
         # ------------------------------------------------------------------ #
         # Step 5: pick best primary_label per node via SQL                   #
@@ -861,7 +902,10 @@ class DuckDBBulkPrototype:
                     file=sys.stderr,
                 )
 
-    def build_subclass_labels(self) -> int:
+    def build_subclass_labels(
+        self,
+        target_subclass_label_count: Optional[int] = None,
+    ) -> int:
         """Compute rdfs:subClassOf ancestor labels per node and store in node_subclass_labels.
 
         Auto-detects whether subClassOf triples exist in relationship_facts; skips silently
@@ -870,6 +914,12 @@ class DuckDBBulkPrototype:
         direct child count meets the coverage threshold, and stores the result as a
         node_subclass_labels table.  The export step JOINs this table to add a ":LABEL"
         column to node Parquet files so neo4j-admin assigns multiple labels at import time.
+
+        Args:
+            target_subclass_label_count: If set, overrides self.min_subclass_label_coverage.
+                The pipeline finds the threshold that retains approximately this many distinct
+                ancestor label candidates (the Nth most common direct-child-count). Useful
+                when you want ~50 or ~100 ancestor categories without picking a fraction.
 
         Returns the number of subClassOf triples found (0 when skipped).
         """
@@ -892,13 +942,33 @@ class DuckDBBulkPrototype:
 
         depth = self.subclass_label_depth
         total_nodes = self.connection.execute("SELECT count(*) FROM node_rows").fetchone()[0]
-        threshold = max(int(total_nodes * self.min_subclass_label_coverage), 1)
+
+        if target_subclass_label_count is not None:
+            # Derive threshold from the Nth most-common direct-child-count so that
+            # approximately target_subclass_label_count ancestor candidates survive.
+            child_counts = self.connection.execute(
+                """
+                SELECT count(DISTINCT source_uri) AS n
+                FROM relationship_facts
+                WHERE rel_type = 'subClassOf' AND NOT target_uri LIKE '_:%'
+                GROUP BY target_uri ORDER BY n DESC
+                """
+            ).fetchall()
+            if len(child_counts) <= target_subclass_label_count:
+                threshold = 1
+            else:
+                threshold = child_counts[target_subclass_label_count - 1][0]
+            threshold = max(threshold, 1)
+            threshold_desc = f"target={target_subclass_label_count} → threshold={threshold:,} direct children"
+        else:
+            threshold = max(int(total_nodes * self.min_subclass_label_coverage), 1)
+            threshold_desc = f"coverage_threshold={threshold:,} direct children"
 
         if self.progress:
             print(
                 f"[subclass-labels] {n_subclass:,} subClassOf triples found"
                 f"  depth={'unlimited' if depth <= 0 else depth}"
-                f"  coverage_threshold={threshold:,} direct children{_mem_stat()}",
+                f"  {threshold_desc}{_mem_stat()}",
                 file=sys.stderr,
             )
 

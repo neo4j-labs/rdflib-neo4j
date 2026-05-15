@@ -234,7 +234,19 @@ def main(argv=None):
             "Fraction of total nodes a label must appear on (globally across all labels arrays) "
             "to be selected as a primary-label candidate during analyze/remap-labels. "
             "Default: 0.001 (0.1%%). Lower → more specific labels; higher → fewer, coarser labels. "
-            "Example: --min-label-coverage 0.01 targets ~100 labels on a 100M-node graph."
+            "Ignored when --target-label-count is set."
+        ),
+    )
+    parser.add_argument(
+        "--target-label-count",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Target number of distinct primary labels. When set, overrides --min-label-coverage: "
+            "the pipeline inspects the actual label frequency distribution and picks the threshold "
+            "that retains approximately N labels (the Nth most common frequency). "
+            "Suggested buckets: 10, 25, 50, 100, 150, 200."
         ),
     )
     parser.add_argument(
@@ -267,6 +279,20 @@ def main(argv=None):
             "Minimum fraction of total nodes that must have a class as a direct subClassOf "
             "child for it to be used as an ancestor label candidate. Default: 0.001 (0.1%%). "
             "Lower → more ancestor labels; higher → only broad categories. "
+            "Ignored when --target-subclass-label-count is set. "
+            "Has no effect when --no-subclass-labels is set."
+        ),
+    )
+    parser.add_argument(
+        "--target-subclass-label-count",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Target number of distinct subClassOf ancestor label categories. When set, overrides "
+            "--min-subclass-label-coverage: the pipeline picks the threshold that retains "
+            "approximately N ancestor candidates (the Nth most-common direct-child-count). "
+            "Suggested buckets: 10, 25, 50, 100, 150, 200. "
             "Has no effect when --no-subclass-labels is set."
         ),
     )
@@ -399,6 +425,7 @@ def main(argv=None):
             prototype.remap_labels(
                 label_map_file=args.label_map_file,
                 min_label_coverage=args.min_label_coverage,
+                target_label_count=args.target_label_count,
             )
             prototype.profile_properties()
             prototype.profile_relationships(
@@ -407,7 +434,9 @@ def main(argv=None):
                 dedup_inverse_pairs=not args.no_dedup_inverse_pairs,
                 ensure_rel_per_label=args.ensure_rel_per_label,
             )
-            prototype.build_subclass_labels()
+            prototype.build_subclass_labels(
+                target_subclass_label_count=args.target_subclass_label_count,
+            )
 
         if stage in ("all", "export"):
             prototype.export_parquet(args.output)
