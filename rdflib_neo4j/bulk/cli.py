@@ -93,10 +93,13 @@ def main(argv=None):
         default=None,
         metavar="N",
         help=(
-            "Number of parallel worker processes for Parquet export (default: cpu_count//4). "
+            "Number of parallel worker processes for Parquet export (default: 2). "
             "Each worker opens the DB read-only and PIVOT-COPYs its assigned labels/rel-types "
             "concurrently. Each worker still uses DuckDB's internal thread pool, so don't set "
-            "this too high. Use 1 for sequential export. Not supported for --db :memory:."
+            "this too high — on large datasets (Freebase-scale) more than 2 workers can cause "
+            ">200 GB combined RAM usage. Workers are further capped by available free memory "
+            "(<16 GB → max 2, <8 GB → forced sequential). Use 1 for sequential export. "
+            "Not supported for --db :memory:."
         ),
     )
     parser.add_argument(

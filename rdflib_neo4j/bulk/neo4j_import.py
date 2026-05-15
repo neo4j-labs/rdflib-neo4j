@@ -11,6 +11,8 @@ from typing import Optional
 
 import duckdb
 
+from rdflib_neo4j.bulk.utils import mem_stat as _mem_stat
+
 # rows_per_file sentinel — negative means no splitting (each label stays one file).
 _NO_SPLIT = -1
 
@@ -263,7 +265,7 @@ def run_neo4j_import(
     result = subprocess.run(cmd, text=True)
     if progress:
         print(
-            f"[neo4j-import] done  exit={result.returncode}  {time.monotonic() - t0:.1f}s",
+            f"[neo4j-import] done  exit={result.returncode}  {time.monotonic() - t0:.1f}s{_mem_stat()}",
             file=sys.stderr,
         )
     return result.returncode

@@ -5,3 +5,4 @@ testcontainers~=3.7.1
 pytest~=7.4.0
 python-dotenv~=1.0.0
 duckdb==1.5.2
+psutil>=5.9

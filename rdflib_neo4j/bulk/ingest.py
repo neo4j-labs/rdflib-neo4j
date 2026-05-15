@@ -15,6 +15,7 @@ import time
 from typing import Callable, Optional
 
 from rdflib_neo4j.bulk.terms import BNODE_PREFIX, object_parts, resource_id
+from rdflib_neo4j.bulk.utils import mem_stat as _mem_stat
 
 # Staging table column order used by all INSERT statements.
 _COLUMNS = "(source_order, subject, predicate, object_kind, object_value, datatype, lang)"
@@ -642,7 +643,7 @@ def ingest_duckdb_rdf(
         elapsed = time.monotonic() - start
         rate = total / elapsed if elapsed > 0 else 0
         print(
-            f"[{label}] {total:,} triples  {rate:,.0f}/s  {elapsed:.1f}s",
+            f"[{label}] {total:,} triples  {rate:,.0f}/s  {elapsed:.1f}s{_mem_stat()}",
             file=sys.stderr,
         )
     return total
@@ -736,7 +737,7 @@ def ingest_duckdb_rdf_bulk(
         elapsed = time.monotonic() - start
         rate = total / elapsed if elapsed > 0 else 0
         print(
-            f"[{label}] {total:,} triples  {rate:,.0f}/s  {elapsed:.1f}s",
+            f"[{label}] {total:,} triples  {rate:,.0f}/s  {elapsed:.1f}s{_mem_stat()}",
             file=sys.stderr,
         )
     return total
@@ -796,6 +797,7 @@ def ingest_duckdb_rdf_parallel(
     temp_dir: Optional[str] = None,
     progress: bool = True,
     filter_cmd: Optional[str] = None,
+    delete_inputs_after_use: bool = False,
 ) -> int:
     """Ingest multiple RDF files using N parallel worker processes + Parquet merge.
 
@@ -814,7 +816,7 @@ def ingest_duckdb_rdf_parallel(
     """
     import os
     import tempfile
-    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures import ProcessPoolExecutor, as_completed
 
     try:
         connection.execute("LOAD rdf")
@@ -850,8 +852,35 @@ def ingest_duckdb_rdf_parallel(
     parquet_files: list[str] = []
     try:
         t_convert = time.monotonic()
+        results = []
         with ProcessPoolExecutor(max_workers=n_workers) as ex:
-            results = list(ex.map(_worker_rdf_to_parquet, worker_args))
+            # Map future → input chunk files so we can free them as each worker finishes.
+            futures = {ex.submit(_worker_rdf_to_parquet, a): a[0] for a in worker_args}
+            for fut in as_completed(futures):
+                input_files = futures[fut]
+                pq, n = fut.result()
+                results.append((pq, n))
+
+                freed_gb = 0.0
+                if delete_inputs_after_use:
+                    for f in input_files:
+                        try:
+                            freed_gb += os.path.getsize(f) / 1e9
+                            os.unlink(f)
+                        except OSError:
+                            pass
+
+                if progress:
+                    dt = time.monotonic() - t_convert
+                    done = len(results)
+                    rate_so_far = sum(r[1] for r in results) / dt if dt > 0 else 0
+                    freed_str = f"  freed {freed_gb:.1f} GB" if freed_gb > 0 else ""
+                    print(
+                        f"[{label}] worker {done}/{len(worker_args)} done"
+                        f"  {n:,} triples  {rate_so_far:,.0f}/s  {dt:.1f}s elapsed{freed_str}{_mem_stat()}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
         dt_convert = time.monotonic() - t_convert
         parquet_files = [pq for pq, _ in results]
         n_converted = sum(n for _, n in results)
@@ -859,20 +888,42 @@ def ingest_duckdb_rdf_parallel(
         if progress:
             rate_c = n_converted / dt_convert if dt_convert > 0 else 0
             print(
-                f"[{label}] converted {n_converted:,} triples in {dt_convert:.1f}s"
-                f" ({rate_c:,.0f}/s); merging ...",
+                f"[{label}] all workers done: {n_converted:,} triples in {dt_convert:.1f}s"
+                f" ({rate_c:,.0f}/s); merging into staging DB ...{_mem_stat()}",
                 file=sys.stderr,
                 flush=True,
             )
 
+        t_merge = time.monotonic()
         count_before = connection.execute("SELECT count(*) FROM rdf_triples").fetchone()[0]
         connection.execute(
             f"INSERT INTO rdf_triples SELECT * FROM read_parquet({parquet_files})"
         )
         total = connection.execute("SELECT count(*) FROM rdf_triples").fetchone()[0] - count_before
+        if progress:
+            print(
+                f"[{label}] merge done: {total:,} triples in {time.monotonic() - t_merge:.1f}s{_mem_stat()}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+        # Free temp Parquet chunks immediately after the merge — no reason to keep them.
+        pq_gb = sum(os.path.getsize(pq) / 1e9 for pq in parquet_files if os.path.exists(pq))
+        for pq in parquet_files:
+            try:
+                os.unlink(pq)
+            except OSError:
+                pass
+        parquet_files.clear()
+        if progress and pq_gb > 0:
+            print(
+                f"[{label}] freed {pq_gb:.1f} GB of temp Parquet chunks",
+                file=sys.stderr,
+                flush=True,
+            )
 
     finally:
-        for pq in parquet_files:
+        for pq in parquet_files:  # catches any that weren't freed above (e.g. on error)
             try:
                 os.unlink(pq)
             except OSError:
@@ -893,10 +944,50 @@ def ingest_duckdb_rdf_parallel(
     return total
 
 
-# NT line validity filter — keeps only lines that look like complete NT triples.
-# Handles byte-split boundary fragments: truncated first lines (no valid subject)
-# and truncated last lines (no terminal ' .').
-_NT_VALIDITY_FILTER = r"grep -E '^(<[^>]+>|_:[^ ]+) .* \.$'"
+def _fix_nt_chunk_boundaries(chunk_files: list) -> None:
+    """Trim partial NT lines at byte-split boundaries.
+
+    `split -b SIZE` cuts at byte boundaries, not line boundaries. At most 1 line
+    is truncated at the END of each chunk and 1 line at the START of the next chunk.
+    This function reads only ~4 KB from the head and tail of each file and truncates
+    or skips partial lines in-place — O(1) I/O per boundary, no subprocess needed.
+    """
+    READ_HEAD = 4096  # more than any realistic NT line
+    for i, path in enumerate(chunk_files):
+        is_first = i == 0
+        is_last = i == len(chunk_files) - 1
+        with open(path, "r+b") as f:
+            # --- fix truncated first line (start of non-first chunk) ---
+            if not is_first:
+                head = f.read(READ_HEAD)
+                nl = head.find(b"\n")
+                if nl >= 0:
+                    first_line = head[:nl].lstrip()
+                    # Valid NT subject starts with '<' (IRI) or '_:' (blank node).
+                    # A continuation fragment from the previous chunk's split line
+                    # will start with arbitrary bytes (e.g. "ject> .") — skip it.
+                    if not (first_line.startswith(b"<") or first_line.startswith(b"_:")):
+                        # Partial — rebuild file without the first line.
+                        f.seek(nl + 1)
+                        rest = f.read()
+                        f.seek(0)
+                        f.write(rest)
+                        f.truncate(f.tell())
+            # --- fix truncated last line (end of non-last chunk) ---
+            if not is_last:
+                f.seek(0, 2)
+                size = f.tell()
+                read_back = min(size, READ_HEAD)
+                f.seek(size - read_back)
+                tail = f.read()
+                # Strip trailing newline to find the last real line.
+                stripped = tail.rstrip(b"\n")
+                last_nl = stripped.rfind(b"\n")
+                last_line = stripped[last_nl + 1:] if last_nl >= 0 else stripped
+                if not last_line.rstrip().endswith(b" ."):
+                    # Partial — truncate at the last complete newline.
+                    trim_to = size - len(tail) + last_nl + 1
+                    f.truncate(max(0, trim_to))
 
 
 def ingest_duckdb_rdf_split_file(
@@ -911,10 +1002,9 @@ def ingest_duckdb_rdf_split_file(
     """Ingest a single large NT/NQ file by byte-splitting and processing chunks in parallel.
 
     For NT and NQ formats (line-per-triple): byte-split the (decompressed) file
-    into N roughly equal chunks using `split -n N`, then apply an NT-validity grep
-    filter to each chunk to silently drop the 1-2 boundary fragments at each
-    split point.  Each chunk is then processed by a separate worker process via
-    ``ingest_duckdb_rdf_parallel()``.
+    into N roughly equal chunks, fix the 1-2 partial lines at each split boundary
+    in-place (O(1) I/O per boundary, no subprocess), then process each chunk via
+    a separate worker process using ``ingest_duckdb_rdf_parallel()``.
 
     Only suitable for NT / NQ formats where each triple is a single line.
     For Turtle, RDF/XML, or other multi-line formats use sequential ingest.
@@ -924,6 +1014,7 @@ def ingest_duckdb_rdf_split_file(
     - format is not recognised as line-oriented (not NT/NQ)
     """
     import os
+    import shutil
     import subprocess
     import tempfile
     import glob as _glob
@@ -987,8 +1078,8 @@ def ingest_duckdb_rdf_split_file(
             # BSD split (macOS) does not support `split -n N -` from stdin because it
             # cannot seek to determine the total size. Use `split -b SIZE` instead,
             # deriving SIZE from the compressed file size (a lower-bound approximation;
-            # the actual uncompressed chunks will be larger but the NT-validity filter
-            # handles any boundary fragments regardless of chunk size).
+            # uncompressed chunks will be larger, and boundary-fix handles the 1-2
+            # partial lines at each split point).
             file_size = os.path.getsize(path)
             chunk_bytes = max(1, file_size // n_workers)
             p1 = subprocess.Popen(
@@ -1019,10 +1110,19 @@ def ingest_duckdb_rdf_split_file(
                 flush=True,
             )
 
-        # `split -n N` cuts at byte boundaries, not line boundaries, so the first and last
-        # lines of each chunk may be truncated. The NT-validity grep silently drops those
-        # 1-2 broken boundary fragments per split point — acceptable for billion-triple datasets.
-        # Only safe for NT/NQ (one triple per line); multi-line formats fall back above.
+        # Fix the 1-2 partial lines at each byte-split boundary in-place.
+        # Reads only ~4 KB from the head/tail of each chunk — no grep subprocess.
+        t_fix = time.monotonic()
+        _fix_nt_chunk_boundaries(chunk_files)
+        if progress:
+            sizes_gb = sum(_os.path.getsize(c) for c in chunk_files) / 1e9
+            print(
+                f"[{label}] boundary fix done in {time.monotonic() - t_fix:.1f}s"
+                f"; {len(chunk_files)} chunks, {sizes_gb:.1f} GB total",
+                file=sys.stderr,
+                flush=True,
+            )
+
         chunk_format = effective_fmt if effective_fmt in {"nquads", "n-quads"} else "nt"
         return ingest_duckdb_rdf_parallel(
             chunk_files,
@@ -1031,20 +1131,15 @@ def ingest_duckdb_rdf_split_file(
             n_workers=n_workers,
             temp_dir=temp_dir,
             progress=progress,
-            filter_cmd=_NT_VALIDITY_FILTER,
+            delete_inputs_after_use=True,
         )
 
     finally:
-        for c in chunk_files:
-            try:
-                _os.unlink(c)
-            except OSError:
-                pass
+        # shutil.rmtree handles everything: partial chunks written before the glob ran,
+        # any chunks not yet consumed by workers, and the directory itself.
+        # Worker-consumed chunks are already gone; rmtree ignores missing files.
         if tmp_owned and tmp_dir_path:
-            try:
-                _os.rmdir(temp_dir)
-            except OSError:
-                pass
+            shutil.rmtree(tmp_dir_path, ignore_errors=True)
 
     if progress:
         elapsed = time.monotonic() - start

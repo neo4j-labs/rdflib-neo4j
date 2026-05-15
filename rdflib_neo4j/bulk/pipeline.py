@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Iterable, Optional
 
+from rdflib_neo4j.bulk.utils import free_mem_gb as _free_mem_gb, mem_stat as _mem_stat
+
 import duckdb
 from rdflib import Graph, RDF
 
@@ -92,7 +94,47 @@ class DuckDBBulkPrototype:
         self.export_workers = export_workers
         self.min_export_nodes = min_export_nodes
         self.connection = duckdb.connect(db_path)
+        self._apply_duckdb_settings()
         self.initialize()
+
+    def _apply_duckdb_settings(self):
+        """Configure DuckDB memory, parallelism, and spill-to-disk settings.
+
+        Called once after connect(). Sets memory_limit to 75% of physical RAM so DuckDB
+        spills to disk rather than crashing on large aggregates. Threads are set
+        conservatively (cpu_count // 4) because export workers open additional
+        DuckDB connections and each connection uses its thread allocation.
+        """
+        try:
+            import psutil as _ps
+            total_gb = _ps.virtual_memory().total / (1024 ** 3)
+            memory_limit_gb = max(4, int(total_gb * 0.75))
+        except ImportError:
+            memory_limit_gb = 8
+
+        n_cpu = _os.cpu_count() or 4
+        threads = max(1, n_cpu // 4)
+
+        if self.temp_dir:
+            tmp = self.temp_dir
+        elif self.db_path != ":memory:":
+            tmp = str(Path(self.db_path).parent / "duckdb_tmp")
+        else:
+            tmp = None
+
+        self.connection.execute(f"SET memory_limit='{memory_limit_gb}GB'")
+        self.connection.execute(f"SET threads={threads}")
+        self.connection.execute("SET preserve_insertion_order=false")
+        if tmp:
+            Path(tmp).mkdir(parents=True, exist_ok=True)
+            self.connection.execute(f"SET temp_directory='{tmp}'")
+
+        if self.progress:
+            print(
+                f"[duckdb] memory_limit={memory_limit_gb}GB  threads={threads}"
+                f"  temp={tmp or 'default'}{_mem_stat()}",
+                file=sys.stderr,
+            )
 
     def close(self):
         self.connection.close()
@@ -424,7 +466,7 @@ class DuckDBBulkPrototype:
             elapsed = time.monotonic() - t0
             print(
                 f"[project] {n_nodes:,} nodes  {n_props:,} props  "
-                f"{n_rels:,} rels  {elapsed:.1f}s",
+                f"{n_rels:,} rels  {elapsed:.1f}s{_mem_stat()}",
                 file=sys.stderr,
             )
 
@@ -485,7 +527,7 @@ class DuckDBBulkPrototype:
             elapsed = time.monotonic() - t0
             print(
                 f"[project] {len(node_rows):,} nodes  {len(property_rows):,} props  "
-                f"{len(relationship_rows):,} rels  {elapsed:.1f}s",
+                f"{len(relationship_rows):,} rels  {elapsed:.1f}s{_mem_stat()}",
                 file=sys.stderr,
             )
 
@@ -547,6 +589,13 @@ class DuckDBBulkPrototype:
             with open(path) as f:
                 custom = json.load(f)
             exclude_patterns.extend(custom.get("exclude", []))
+            # "exclude_remove" lets callers un-exclude built-in patterns (e.g. "Class"
+            # for OWL ontologies where owl:Class carries domain-meaningful entities).
+            for pat in custom.get("exclude_remove", []):
+                try:
+                    exclude_patterns.remove(pat)
+                except ValueError:
+                    pass
             map_config.update(custom.get("map", {}))
 
         resolved_excludes: set[str] = set()
@@ -711,7 +760,7 @@ class DuckDBBulkPrototype:
                 "SELECT count(DISTINCT primary_label) FROM node_rows"
             ).fetchone()[0]
             print(
-                f"[remap] done — {n_labels:,} distinct labels across {total:,} nodes",
+                f"[remap] done — {n_labels:,} distinct labels across {total:,} nodes{_mem_stat()}",
                 file=sys.stderr,
             )
             print("[remap] top 30:", file=sys.stderr)
@@ -751,7 +800,7 @@ class DuckDBBulkPrototype:
         if self.progress:
             size_mb = Path(new_db_path).stat().st_size / 1_048_576
             print(
-                f"[compact] done — {size_mb:,.0f} MB  {time.monotonic()-t0:.1f}s",
+                f"[compact] done — {size_mb:,.0f} MB  {time.monotonic()-t0:.1f}s{_mem_stat()}",
                 file=sys.stderr,
             )
 
@@ -791,7 +840,7 @@ class DuckDBBulkPrototype:
                 p99 = counts[int(len(counts) * 0.01)]
                 print(
                     f"[prop-profile] {len(rows)} labels  "
-                    f"properties/label: max={counts[0]:,}  p99={p99:,}  p90={p90:,}  median={p50:,}",
+                    f"properties/label: max={counts[0]:,}  p99={p99:,}  p90={p90:,}  median={p50:,}{_mem_stat()}",
                     file=sys.stderr,
                 )
                 print("[prop-profile] top 15 labels by property count:", file=sys.stderr)
@@ -842,6 +891,11 @@ class DuckDBBulkPrototype:
             with open(rel_map_file) as f:
                 custom = json.load(f)
             rel_exclude.extend(custom.get("rel_exclude", []))
+            for pat in custom.get("rel_exclude_remove", []):
+                try:
+                    rel_exclude.remove(pat)
+                except ValueError:
+                    pass
 
         if self.progress:
             print("[rel-profile] collecting rel types and applying exclude patterns...", file=sys.stderr)
@@ -859,7 +913,7 @@ class DuckDBBulkPrototype:
 
         if self.progress:
             print(
-                f"[rel-profile] {len(excluded):,} / {len(all_rel_types):,} types pattern-excluded  ({time.monotonic() - t0:.1f}s)",
+                f"[rel-profile] {len(excluded):,} / {len(all_rel_types):,} types pattern-excluded  ({time.monotonic() - t0:.1f}s){_mem_stat()}",
                 file=sys.stderr,
             )
 
@@ -901,7 +955,7 @@ class DuckDBBulkPrototype:
         )
         self.connection.execute("DROP TABLE IF EXISTS _excl_rels")
         if self.progress:
-            print(f"[rel-profile] relationship_profile built  ({time.monotonic() - t0:.1f}s)", file=sys.stderr)
+            print(f"[rel-profile] relationship_profile built  ({time.monotonic() - t0:.1f}s){_mem_stat()}", file=sys.stderr)
 
         # Inverse pair deduplication: Freebase/DBpedia emit both directions of every
         # relationship (e.g. music.recording.artist ↔ music.artist.track, both ~12.4M
@@ -996,7 +1050,7 @@ class DuckDBBulkPrototype:
         self.connection.execute("DROP TABLE IF EXISTS _covered_labels")
         if self.progress:
             print(
-                f"[rel-profile] orphan check done  ({time.monotonic() - t_orphan:.1f}s)",
+                f"[rel-profile] orphan check done  ({time.monotonic() - t_orphan:.1f}s){_mem_stat()}",
                 file=sys.stderr,
             )
 
@@ -1120,7 +1174,7 @@ class DuckDBBulkPrototype:
         self._write_node_parquet(output_path / "nodes")
         self._write_rel_parquet(output_path / "relationships")
         if self.progress:
-            print(f"[export] done  {time.monotonic() - t0:.1f}s", file=sys.stderr)
+            print(f"[export] done  {time.monotonic() - t0:.1f}s{_mem_stat()}", file=sys.stderr)
 
     def export_nodes(self, output_dir: str):
         """Export only node Parquet files (assumes pivot_nodes already ran or will run)."""
@@ -1133,7 +1187,7 @@ class DuckDBBulkPrototype:
         self._write_metadata(output_path / "metadata")
         self._write_node_parquet(output_path / "nodes")
         if self.progress:
-            print(f"[export] nodes done  {time.monotonic() - t0:.1f}s", file=sys.stderr)
+            print(f"[export] nodes done  {time.monotonic() - t0:.1f}s{_mem_stat()}", file=sys.stderr)
 
     def export_relationships(self, output_dir: str):
         """Export only relationship Parquet files (assumes deduplicate_relationships already ran or will run)."""
@@ -1145,7 +1199,7 @@ class DuckDBBulkPrototype:
         self._ensure_output_dirs(output_path)
         self._write_rel_parquet(output_path / "relationships")
         if self.progress:
-            print(f"[export] relationships done  {time.monotonic() - t0:.1f}s", file=sys.stderr)
+            print(f"[export] relationships done  {time.monotonic() - t0:.1f}s{_mem_stat()}", file=sys.stderr)
 
     def _ensure_output_dirs(self, output_path: Path):
         (output_path / "metadata").mkdir(parents=True, exist_ok=True)
@@ -1156,18 +1210,39 @@ class DuckDBBulkPrototype:
         """Resolve effective worker count for parallel export.
 
         :memory: DBs can't be shared across processes — fall back to 1.
-        Otherwise clamp to [1, n_tasks] so we don't spawn more workers than tasks.
+        Otherwise clamp to [1, n_tasks] and apply a memory-aware cap so we
+        don't trigger OOM when RAM is scarce.  Default is 2 to avoid the
+        200 GB+ RAM spike seen with higher concurrency on large datasets.
         """
         if self.db_path == ":memory:":
             return 1
         if self.export_workers is not None:
             n = self.export_workers
         else:
-            # Default: cpu_count // 4. Each worker runs DuckDB's internal PIVOT which
-            # itself uses multiple threads, so over-committing workers causes contention.
-            # cpu_count // 4 gives 4 workers on a 16-core machine (each using ~4 threads).
-            n = max(1, (_os.cpu_count() or 4) // 4)
-        return max(1, min(n, n_tasks))
+            # Default: 2 workers. Each runs DuckDB's multi-threaded PIVOT internally;
+            # more than 2 concurrent PIVOTs on a large DB (e.g. Freebase) caused
+            # >200 GB combined RAM usage and OOM-killed the machine.
+            n = 2
+        n = max(1, min(n, n_tasks))
+
+        # Memory-aware cap (applied even when --export-workers is explicit).
+        free_gb = _free_mem_gb()
+        if free_gb >= 0:
+            if free_gb < 8:
+                if n > 1 and self.progress:
+                    print(
+                        f"[export] WARNING: only {free_gb:.1f} GB free — forcing sequential export (1 worker)",
+                        file=sys.stderr,
+                    )
+                n = 1
+            elif free_gb < 16 and n > 2:
+                if self.progress:
+                    print(
+                        f"[export] WARNING: only {free_gb:.1f} GB free — capping export workers at 2",
+                        file=sys.stderr,
+                    )
+                n = 2
+        return n
 
     def _run_parallel_export(self, tasks, worker_fn, n_workers: int, label_for_log: str):
         """Checkpoint, close the write connection, run workers, reopen the connection.
@@ -1179,6 +1254,11 @@ class DuckDBBulkPrototype:
         steps keep working.
         """
         from concurrent.futures import ProcessPoolExecutor, as_completed
+        if self.progress:
+            print(
+                f"[export] starting {n_workers} worker(s) for {len(tasks)} {label_for_log} tasks{_mem_stat()}",
+                file=sys.stderr,
+            )
         self.connection.execute("CHECKPOINT")
         self.connection.close()
         try:
@@ -1187,7 +1267,10 @@ class DuckDBBulkPrototype:
                 for fut in as_completed(futures):
                     name, n = fut.result()
                     if self.progress:
-                        print(f"[export]   {label_for_log}/{_safe_name(name)}.parquet  {n:,} rows", file=sys.stderr)
+                        print(
+                            f"[export]   {label_for_log}/{_safe_name(name)}.parquet  {n:,} rows{_mem_stat()}",
+                            file=sys.stderr,
+                        )
         finally:
             self.connection = duckdb.connect(self.db_path)
 
@@ -1231,7 +1314,8 @@ class DuckDBBulkPrototype:
         if self.progress:
             print(
                 f"[export] writing {len(labels)} node label files"
-                + (f" with {n_workers} parallel workers" if n_workers > 1 else " (sequential)"),
+                + (f" with {n_workers} parallel workers" if n_workers > 1 else " (sequential)")
+                + _mem_stat(),
                 file=sys.stderr,
             )
 
@@ -1273,7 +1357,7 @@ class DuckDBBulkPrototype:
                         """
                     )
                 if self.progress:
-                    print(f"[export]   nodes/{_safe_name(label)}.parquet  {label_counts[label]:,} rows", file=sys.stderr)
+                    print(f"[export]   nodes/{_safe_name(label)}.parquet  {label_counts[label]:,} rows{_mem_stat()}", file=sys.stderr)
         else:
             # Parallel: close the write connection so workers can open read-only connections.
             task_args = [
@@ -1296,7 +1380,8 @@ class DuckDBBulkPrototype:
         if self.progress:
             print(
                 f"[export] writing {len(rel_types)} relationship type files"
-                + (f" with {n_workers} parallel workers" if n_workers > 1 else " (sequential)"),
+                + (f" with {n_workers} parallel workers" if n_workers > 1 else " (sequential)")
+                + _mem_stat(),
                 file=sys.stderr,
             )
 
@@ -1317,7 +1402,7 @@ class DuckDBBulkPrototype:
                     n = self.connection.execute(
                         f"SELECT count(*) FROM relationship_rows WHERE rel_type = {rel_lit}"
                     ).fetchone()[0]
-                    print(f"[export]   relationships/{_safe_name(rel_type)}.parquet  {n:,} rows", file=sys.stderr)
+                    print(f"[export]   relationships/{_safe_name(rel_type)}.parquet  {n:,} rows{_mem_stat()}", file=sys.stderr)
         else:
             task_args = [
                 (self.db_path, rel_type, str(rels_dir / f"{_safe_name(rel_type)}.parquet"),
@@ -1508,24 +1593,60 @@ class DuckDBBulkPrototype:
                     file=sys.stderr,
                 )
 
-        # primary_label is baked into node_property_values here so that per-label
-        # PIVOT export can filter with a direct equality check instead of re-joining
-        # node_rows against all 194M property rows for every label — one join now
-        # vs O(total_properties × N_labels) scans later.
+        # primary_label is baked into node_property_values so per-label PIVOT
+        # export can filter with a direct equality check instead of re-joining
+        # node_rows against all property rows for every label.
+        #
+        # We INSERT one label at a time and CHECKPOINT between labels to bound
+        # the peak memory. A single monolithic GROUP BY across all nodes × all
+        # properties caused >100 GB aggregate memory usage on Freebase-scale data.
+        value_type = "VARCHAR[]" if mode == AggregationMode.ARRAY else "VARCHAR"
         self.connection.execute(
             f"""
-            CREATE OR REPLACE TABLE node_property_values AS
-            SELECT
-                pf.uri,
-                nr.primary_label,
-                pf.projected_property_name,
-                {aggregate} AS value
-            FROM property_facts pf
-            JOIN node_rows nr ON nr.uri = pf.uri
-            JOIN _allowed_properties ap USING (projected_property_name)
-            GROUP BY pf.uri, nr.primary_label, pf.projected_property_name
+            CREATE OR REPLACE TABLE node_property_values (
+                uri VARCHAR,
+                primary_label VARCHAR,
+                projected_property_name VARCHAR,
+                value {value_type}
+            )
             """
         )
+
+        labels = [
+            row[0]
+            for row in self.connection.execute(
+                "SELECT DISTINCT primary_label FROM node_property_profile ORDER BY primary_label"
+            ).fetchall()
+        ]
+        n_labels = len(labels)
+        t_pivot_start = time.monotonic()
+        for i, label in enumerate(labels, 1):
+            label_lit = _sql_literal(label)
+            self.connection.execute(
+                f"""
+                INSERT INTO node_property_values
+                SELECT
+                    pf.uri,
+                    nr.primary_label,
+                    pf.projected_property_name,
+                    {aggregate} AS value
+                FROM property_facts pf
+                JOIN node_rows nr ON nr.uri = pf.uri
+                JOIN _allowed_properties ap USING (projected_property_name)
+                WHERE nr.primary_label = {label_lit}
+                GROUP BY pf.uri, nr.primary_label, pf.projected_property_name
+                """
+            )
+            # Flush to disk after each label to release aggregate memory.
+            # CHECKPOINT is a no-op on :memory: databases.
+            self.connection.execute("CHECKPOINT")
+            if self.progress:
+                elapsed = time.monotonic() - t_pivot_start
+                print(
+                    f"[pivot] ({i}/{n_labels}) {label}  {elapsed:.0f}s{_mem_stat()}",
+                    file=sys.stderr,
+                )
+
         self.connection.execute("DROP TABLE IF EXISTS _allowed_properties")
 
 

@@ -627,6 +627,34 @@ def test_profile_relationships_no_rescue_for_pattern_excluded():
         prototype.close()
 
 
+def test_fix_nt_chunk_boundaries(tmp_path):
+    """_fix_nt_chunk_boundaries trims partial lines at byte-split boundaries."""
+    from rdflib_neo4j.bulk.ingest import _fix_nt_chunk_boundaries
+
+    complete = b"<http://a> <http://b> <http://c> .\n"
+    # Continuation of a line split mid-IRI: starts with bytes that aren't '<' or '_:'
+    partial_head = b"ttp://c> .\n"     # tail of previous chunk's split line
+    partial_tail = b"<http://a> <ht"   # start of a line that continues in next chunk
+
+    # Chunk 0: may have a truncated last line, never a bad first line
+    chunk0 = tmp_path / "chunk_aa"
+    chunk0.write_bytes(complete + partial_tail)
+
+    # Chunk 1 (middle): bad first line AND bad last line
+    chunk1 = tmp_path / "chunk_ab"
+    chunk1.write_bytes(partial_head + complete + partial_tail)
+
+    # Chunk 2 (last): bad first line, last line is always complete
+    chunk2 = tmp_path / "chunk_ac"
+    chunk2.write_bytes(partial_head + complete)
+
+    _fix_nt_chunk_boundaries([str(chunk0), str(chunk1), str(chunk2)])
+
+    assert chunk0.read_bytes() == complete          # partial_tail trimmed from end
+    assert chunk1.read_bytes() == complete          # partial_head and partial_tail removed
+    assert chunk2.read_bytes() == complete          # partial_head removed, complete kept
+
+
 def test_analyze_requires_db_when_no_output(tmp_path):
     """CLI validation: --stage analyze requires --db when --output is not provided."""
     # Missing both --db and --output: should error
