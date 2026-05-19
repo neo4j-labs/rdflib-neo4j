@@ -2,7 +2,13 @@ from functools import wraps
 from time import time
 from typing import Dict
 from rdflib import URIRef
+from rdflib.term import BNode
 from rdflib_neo4j.config.const import ShortenStrictException, HANDLE_VOCAB_URI_STRATEGY, NEO4J_DRIVER_DICT_MESSAGE
+
+
+def bnode_to_uri(bnode: BNode) -> str:
+    """Convert a BNode to a bnode:// URI matching n10s behaviour."""
+    return f"bnode://{bnode}"
 
 
 def timing(f):

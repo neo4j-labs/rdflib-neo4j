@@ -11,7 +11,8 @@ from rdflib_neo4j.config.const import NEO4J_DRIVER_USER_AGENT_NAME
 from rdflib_neo4j.config.utils import check_auth_data
 from rdflib_neo4j.query_composers.NodeQueryComposer import NodeQueryComposer
 from rdflib_neo4j.query_composers.RelationshipQueryComposer import RelationshipQueryComposer
-from rdflib_neo4j.utils import handle_neo4j_driver_exception
+from rdflib.term import BNode
+from rdflib_neo4j.utils import handle_neo4j_driver_exception, bnode_to_uri
 
 
 class Neo4jStore(Store):
@@ -257,7 +258,8 @@ class Neo4jStore(Store):
         self.__store_current_subject_rels()
 
     def __create_current_subject(self, subject):
-        return Neo4jTriple(uri=subject,
+        uri = bnode_to_uri(subject) if isinstance(subject, BNode) else subject
+        return Neo4jTriple(uri=uri,
                            prefixes={value: key for key, value in self.config.get_prefixes().items()},
                            # Reversing the Prefix dictionary
                            handle_vocab_uri_strategy=self.handle_vocab_uri_strategy,
@@ -277,7 +279,8 @@ class Neo4jStore(Store):
         if self.current_subject is None:
             self.current_subject = self.__create_current_subject(subject)
         else:
-            if self.current_subject.uri != subject:
+            normalized = bnode_to_uri(subject) if isinstance(subject, BNode) else subject
+            if self.current_subject.uri != normalized:
                 self.__store_current_subject()
                 self.current_subject = self.__create_current_subject(subject)
 
