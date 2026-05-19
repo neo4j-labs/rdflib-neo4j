@@ -1,12 +1,14 @@
 from collections import defaultdict
+
+from decimal import Decimal
 from typing import Dict, List, Optional, Set
 
 from rdflib import Literal, RDF, URIRef
-from rdflib.term import Node
+from rdflib.term import BNode, Node
 
 from rdflib_neo4j.config.const import HANDLE_MULTIVAL_STRATEGY, HANDLE_VOCAB_URI_STRATEGY
 from rdflib_neo4j.datatypes import coerce_literal
-from rdflib_neo4j.utils import handle_vocab_uri
+from rdflib_neo4j.utils import bnode_to_uri, handle_vocab_uri
 
 
 class Neo4jTriple:
@@ -190,4 +192,5 @@ class Neo4jTriple:
         # Getting its relationships
         else:
             rel_type = self.handle_vocab_uri(mappings, predicate)
-            self.add_rel(rel_type, object)
+            to_uri = bnode_to_uri(object) if isinstance(object, BNode) else object
+            self.add_rel(rel_type, to_uri)

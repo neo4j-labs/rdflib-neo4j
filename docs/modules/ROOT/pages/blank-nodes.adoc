@@ -1,0 +1,163 @@
+= Blank Nodes
+[.procedures, opts=header]
+
+== What are blank nodes?
+
+In RDF, a _blank node_ (BNode) is an anonymous resource — a node that has no globally-resolvable URI.
+Blank nodes are commonly produced by OWL restrictions, reification patterns, SPARQL `CONSTRUCT` queries, and many real-world ontologies.
+In Turtle syntax they appear as `_:b1` labels; in programmatic rdflib usage they are created with `rdflib.term.BNode()`.
+
+Blank nodes are intentionally graph-scoped: their identity is only meaningful within a single RDF graph.
+Because Neo4j models every resource by a `uri` property, blank nodes require special treatment before they can be stored.
+
+== How rdflib-neo4j maps blank nodes to Neo4j
+
+When a triple has a blank node as its *subject* or as a non-literal *object*, the store rewrites the BNode
+to a `bnode://` URI before writing to Neo4j.
+The conversion is performed by the `bnode_to_uri()` utility function in `rdflib_neo4j/utils.py`:
+
+[source,python]
+----
+def bnode_to_uri(bnode: BNode) -> str:
+    """Convert a BNode to a bnode:// URI matching n10s behaviour."""
+    return f"bnode://{bnode}"
+----
+
+This matches the behaviour of https://neo4j.com/labs/neosemantics/[neosemantics (n10s)], Neo4j's native RDF plugin.
+
+=== Subject blank nodes
+
+When a triple's subject is a BNode, the synthesized URI is used as the `uri` property of the corresponding `Resource` node in Neo4j.
+
+For example, the blank node `_:b1` becomes:
+
+----
+uri = "bnode://b1"
+----
+
+=== Object blank nodes
+
+When a BNode appears as a relationship target (i.e. a non-literal object), the synthesized URI is used as the `uri` of the target `Resource` node, and a normal Neo4j relationship is created between the two nodes.
+
+=== Identity stability within an import
+
+BNode identity is stable within a single import whenever the blank node identifier is the same.
+Parsing a Turtle file will always use the same string label (e.g. `_:b1`) for each occurrence, so all triples sharing that subject are correctly grouped into one Neo4j node.
+
+[IMPORTANT]
+====
+BNode identity is only stable across imports when the identifier string is preserved.
+If you import two separate files that both contain `_:b1`, those blank nodes will map to the same `bnode://b1` URI and will *merge* in Neo4j due to the `UNIQUE` constraint on `:Resource(uri)`.
+This matches n10s behaviour, but RDF semantics treat blank nodes as graph-scoped — be aware that overlapping identifiers across separate imports will cause unintended merges.
+====
+
+=== Subject grouping fix
+
+The implementation also fixes subject-identity comparison in `__check_current_subject()`.
+Without this fix, consecutive triples sharing the same BNode subject were compared as raw `BNode` objects against the already-normalized `bnode://` URI string, causing each triple to be incorrectly treated as a new subject.
+The comparison now normalizes the incoming subject before comparing, so all triples for the same blank node are collected into a single Neo4j node.
+
+== Python code example
+
+The following example creates a small in-memory RDF graph containing blank nodes — a blank node as a subject, and a blank node as a relationship target — and loads it into Neo4j.
+It then queries Neo4j directly using the Python driver to confirm that the blank nodes are accessible by their synthesized `bnode://` URIs.
+
+[source,python]
+----
+from rdflib import Graph, Namespace, RDF, Literal, URIRef
+from rdflib.term import BNode
+from rdflib_neo4j import Neo4jStoreConfig, Neo4jStore, HANDLE_VOCAB_URI_STRATEGY
+from neo4j import GraphDatabase
+
+# --- Neo4j connection ---
+AUTH_DATA = {
+    "uri": "bolt://localhost:7687",
+    "database": "neo4j",
+    "user": "neo4j",
+    "pwd": "password",
+}
+
+FOAF = Namespace("http://xmlns.com/foaf/0.1/")
+EX   = Namespace("http://example.org/")
+
+# --- Build an in-memory graph with blank nodes ---
+# Turtle equivalent:
+#   _:alice a foaf:Person ; foaf:name "Alice" .
+#   ex:Bob  a foaf:Person ; foaf:name "Bob" ; foaf:knows _:alice .
+
+mem_graph = Graph()
+
+alice = BNode("alice")                     # blank node subject
+bob   = URIRef("http://example.org/Bob")   # regular URI subject
+
+mem_graph.add((alice, RDF.type,    FOAF.Person))
+mem_graph.add((alice, FOAF.name,   Literal("Alice")))
+mem_graph.add((bob,   RDF.type,    FOAF.Person))
+mem_graph.add((bob,   FOAF.name,   Literal("Bob")))
+mem_graph.add((bob,   FOAF.knows,  alice))  # BNode as object
+
+# --- Load into Neo4j ---
+config = Neo4jStoreConfig(
+    auth_data=AUTH_DATA,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.IGNORE,
+    batching=False,
+)
+
+neo4j_graph = Graph(store=Neo4jStore(config=config))
+neo4j_graph.parse(data=mem_graph.serialize(format="turtle"), format="turtle")
+neo4j_graph.close(commit_pending_transaction=True)
+
+# --- Verify via the Neo4j driver ---
+driver = GraphDatabase.driver(AUTH_DATA["uri"], auth=(AUTH_DATA["user"], AUTH_DATA["pwd"]))
+
+with driver.session(database=AUTH_DATA["database"]) as session:
+    # 1. Confirm blank-node Resource exists with a bnode:// URI
+    result = session.run(
+        "MATCH (r:Resource) WHERE r.uri STARTS WITH 'bnode://' RETURN r.uri, r.name"
+    )
+    for record in result:
+        print(f"BNode node  uri={record['r.uri']}  name={record['r.name']}")
+    # Expected: BNode node  uri=bnode://alice  name=Alice
+
+    # 2. Confirm the relationship from Bob → bnode://alice is present
+    result = session.run(
+        """
+        MATCH (bob:Resource {uri: $bob_uri})-[:knows]->(bn:Resource)
+        WHERE bn.uri STARTS WITH 'bnode://'
+        RETURN bob.name AS bob_name, bn.uri AS bnode_uri, bn.name AS bnode_name
+        """,
+        bob_uri=str(EX.Bob),
+    )
+    for record in result:
+        print(
+            f"{record['bob_name']} knows {record['bnode_name']} "
+            f"(stored as {record['bnode_uri']})"
+        )
+    # Expected: Bob knows Alice (stored as bnode://alice)
+
+driver.close()
+----
+
+=== What you will see in Neo4j
+
+After running the example, two `Resource` nodes exist in Neo4j:
+
+|===
+| `uri` | `name` | Labels
+
+| `http://example.org/Bob` | `Bob` | `Resource`, `Person`
+| `bnode://alice`          | `Alice` | `Resource`, `Person`
+|===
+
+And one relationship:
+
+----
+(Resource {uri: "http://example.org/Bob"})-[:knows]->(Resource {uri: "bnode://alice"})
+----
+
+The blank node is fully addressable: any Cypher query can look it up by `uri = "bnode://alice"` or traverse relationships to and from it, just like a regular URI resource.
+
+== Relationship to neosemantics (n10s)
+
+The `bnode://` scheme is the same convention used by n10s when it imports RDF into Neo4j.
+Data loaded by rdflib-neo4j will therefore be compatible with n10s-based tooling that expects blank nodes in this form.
