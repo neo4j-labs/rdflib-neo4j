@@ -2,6 +2,7 @@
 * xref:gettingstarted.adoc[Getting Started]
 * xref:neo4jstore.adoc[Neo4j Store]
 * xref:neo4jstoreconfig.adoc[Store Configuration]
+* xref:datatype-coercion.adoc[XSD Datatype Coercion]
 * xref:blank-nodes.adoc[Blank Nodes]
 * xref:examples.adoc[Examples]
 * xref:contributing.adoc[Contributing]

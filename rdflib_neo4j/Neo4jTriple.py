@@ -1,10 +1,14 @@
 from collections import defaultdict
+
 from decimal import Decimal
-from typing import Dict, Set, List
-from rdflib import Literal, URIRef, RDF
+from typing import Dict, List, Optional, Set
+
+from rdflib import Literal, RDF, URIRef
 from rdflib.term import BNode, Node
+
+from rdflib_neo4j.config.const import HANDLE_MULTIVAL_STRATEGY, HANDLE_VOCAB_URI_STRATEGY
+from rdflib_neo4j.datatypes import coerce_literal
 from rdflib_neo4j.utils import bnode_to_uri, handle_vocab_uri
-from rdflib_neo4j.config.const import HANDLE_VOCAB_URI_STRATEGY, HANDLE_MULTIVAL_STRATEGY
 
 
 class Neo4jTriple:
@@ -22,7 +26,10 @@ class Neo4jTriple:
                  handle_vocab_uri_strategy: HANDLE_VOCAB_URI_STRATEGY,
                  handle_multival_strategy: HANDLE_MULTIVAL_STRATEGY,
                  multival_props_names: List[str],
-                 prefixes: Dict[str, str]):
+                 prefixes: Dict[str, str],
+                 keep_lang_tag: bool = False,
+                 keep_custom_data_types: bool = False,
+                 language_filter: Optional[str] = None):
         """
         Constructor for Neo4jTriple.
 
@@ -42,6 +49,9 @@ class Neo4jTriple:
         self.handle_multival_strategy = handle_multival_strategy
         self.multival_props_names = multival_props_names
         self.prefixes = prefixes
+        self.keep_lang_tag = keep_lang_tag
+        self.keep_custom_data_types = keep_custom_data_types
+        self.language_filter = language_filter
 
     def add_label(self, label: str):
         """
@@ -155,8 +165,14 @@ class Neo4jTriple:
 
         # Getting a property
         if isinstance(object, Literal):
-            # Neo4j Python driver does not support decimal params
-            value = float(object.toPython()) if type(object.toPython()) == Decimal else object.toPython()
+            value = coerce_literal(
+                object,
+                keep_lang_tag=self.keep_lang_tag,
+                keep_custom_data_types=self.keep_custom_data_types,
+                language_filter=self.language_filter,
+            )
+            if value is None:
+                return  # language_filter skipped this literal
             prop_name = self.handle_vocab_uri(mappings, predicate)
 
             # If at least a name is defined and the predicate is one of the properties defined by the user

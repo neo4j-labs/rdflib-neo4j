@@ -1,0 +1,236 @@
+= XSD Datatype Coercion
+[.procedures, opts=header]
+
+When RDF data is parsed and stored in Neo4j, typed literals must be converted from their RDF representation into Neo4j-native property types.
+This process is called *XSD datatype coercion*.
+The library handles it automatically via the `coerce_literal()` function in `rdflib_neo4j/datatypes.py`, and it is controlled through three optional flags on `Neo4jStoreConfig`.
+
+== How It Works
+
+Every RDF typed literal carries a datatype URI (e.g. `xsd:integer`, `xsd:boolean`).
+When a triple whose object is a literal is ingested, `coerce_literal()` inspects that datatype and converts the value to the most appropriate Python / Neo4j type before writing it to the database.
+
+The conversion rules follow the natural mapping between XSD and Neo4j:
+
+* Numeric XSD types become Python `int` or `float`.
+* `xsd:boolean` becomes Python `bool`.
+* `xsd:string` / `xsd:normalizedString` become Python `str`.
+* Temporal XSD types become `neo4j.time.*` objects when the `neo4j` driver package is installed; otherwise they fall back to `str`.
+* Language-tagged literals are converted according to the `keep_lang_tag` flag.
+* Unknown / custom datatypes are handled according to the `keep_custom_data_types` flag.
+
+== Datatype Mapping Table
+
+|===
+| XSD Datatype(s) | Neo4j Property Type | Notes
+
+| `xsd:integer`, `xsd:long`, `xsd:int`, `xsd:short`, `xsd:byte`
+| Integer (`int`)
+| All standard signed integer variants
+
+| `xsd:nonNegativeInteger`, `xsd:positiveInteger`, `xsd:nonPositiveInteger`, `xsd:negativeInteger`
+| Integer (`int`)
+| Constraint is not enforced by Neo4j; value stored as-is
+
+| `xsd:unsignedLong`, `xsd:unsignedInt`, `xsd:unsignedShort`, `xsd:unsignedByte`
+| Integer (`int`)
+| Unsigned variants — all coerced to Python `int`
+
+| `xsd:float`, `xsd:double`
+| Float (`float`)
+| Direct cast to Python `float`
+
+| `xsd:decimal`
+| Float (`float`)
+| Python `Decimal` is converted to `float`
+
+| `xsd:boolean`
+| Boolean (`bool`)
+| rdflib's `toPython()` returns `True` / `False`
+
+| `xsd:string`, `xsd:normalizedString`
+| String (`str`)
+| Stored as a plain string
+
+| `xsd:date`
+| `neo4j.time.Date`
+| Falls back to `str` when the `neo4j` package is absent
+
+| `xsd:dateTime`, `xsd:dateTimeStamp`
+| `neo4j.time.DateTime`
+| Timezone offset preserved when present; falls back to `str`
+
+| `xsd:duration`, `xsd:dayTimeDuration`, `xsd:yearMonthDuration`
+| `neo4j.time.Duration`
+| Converted from `datetime.timedelta`; falls back to `str`
+
+| Language-tagged literal (e.g. `"hello"@en`)
+| String (`str`)
+| See <<lang-tags>> for `keep_lang_tag` / `language_filter` options
+
+| Unknown / custom datatype
+| String (`str`)
+| See <<custom-datatypes>> for `keep_custom_data_types` option
+|===
+
+[#lang-tags]
+== Language-Tagged Literals
+
+Language-tagged literals (e.g. `"Bonjour"@fr`) are plain strings at the RDF level; they carry no XSD datatype.
+The library offers two configuration options that affect how they are stored.
+
+=== keep_lang_tag
+
+When `keep_lang_tag=True`, the language code is appended to the value with an `@` separator, producing a string such as `"hello@en"`.
+When `keep_lang_tag=False` (the default), only the string value is kept.
+
+=== language_filter
+
+When `language_filter` is set to a BCP-47 language tag (e.g. `"en"`), any literal whose language tag does not match is *silently skipped* — the triple is not written to Neo4j.
+The comparison is case-insensitive.
+
+|===
+| Literal | `keep_lang_tag` | `language_filter` | Stored value
+
+| `"hello"@en`
+| `False`
+| _(none)_
+| `"hello"`
+
+| `"hello"@en`
+| `True`
+| _(none)_
+| `"hello@en"`
+
+| `"hello"@en`
+| `False`
+| `"fr"`
+| _(skipped)_
+
+| `"hello"@en`
+| `True`
+| `"en"`
+| `"hello@en"`
+|===
+
+[#custom-datatypes]
+== Custom and Unknown Datatypes
+
+RDF allows arbitrary datatype URIs beyond the XSD vocabulary (e.g. `"123-45-6789"^^<http://example.org/ssn>`).
+When such a literal is encountered, the behaviour depends on `keep_custom_data_types`:
+
+* `keep_custom_data_types=False` (default) — rdflib's `toPython()` is called and the result is stored.
+  For truly unknown types this typically returns a plain string with the lexical form.
+* `keep_custom_data_types=True` — the value is stored as `"lexicalForm^^datatypeURI"`, preserving the full round-trip information.
+
+== Configuration
+
+All three options are set on `Neo4jStoreConfig`:
+
+|===
+| Parameter | Type | Default | Description
+
+| `keep_lang_tag`
+| `bool`
+| `False`
+| Append the language code to language-tagged literals (`"value@lang"`)
+
+| `keep_custom_data_types`
+| `bool`
+| `False`
+| Preserve unknown datatypes as `"value^^<uri>"` strings
+
+| `language_filter`
+| `str` or `None`
+| `None`
+| Keep only literals whose language tag matches this BCP-47 code; skip all others
+|===
+
+== Python Example
+
+The following example imports a small Turtle document containing typed literals and shows what is written to Neo4j.
+
+.Turtle source (`data.ttl`)
+[source,turtle]
+----
+@prefix ex:  <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix schema: <http://schema.org/> .
+
+ex:Alice
+    a schema:Person ;
+    schema:name      "Alice"@en ;
+    schema:birthDate "1990-06-15"^^xsd:date ;
+    schema:height    "1.70"^^xsd:decimal ;
+    ex:active        "true"^^xsd:boolean ;
+    ex:score         "42"^^xsd:integer .
+----
+
+.Python import script
+[source,python]
+----
+from rdflib import ConjunctiveGraph, Namespace
+from rdflib_neo4j import HANDLE_VOCAB_URI_STRATEGY, Neo4jStoreConfig, Neo4jStore
+
+# Namespaces used in the Turtle file
+SCHEMA = Namespace("http://schema.org/")
+EX    = Namespace("http://example.org/")
+
+auth = {
+    "uri": "bolt://localhost:7687",
+    "database": "neo4j",
+    "user": "neo4j",
+    "pwd": "password",
+}
+
+config = Neo4jStoreConfig(
+    auth_data=auth,
+    custom_prefixes={"schema": SCHEMA, "ex": EX},
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN,
+    # Store English labels only; append the language tag to the stored value
+    keep_lang_tag=True,
+    language_filter="en",
+    # Preserve any custom datatype annotations
+    keep_custom_data_types=True,
+)
+
+store = Neo4jStore(config=config)
+g = ConjunctiveGraph(store=store)
+g.parse("data.ttl", format="ttl")
+g.close()
+----
+
+After the import, the Neo4j node for `ex:Alice` will have the following properties:
+
+|===
+| Property | Stored value | Neo4j type
+
+| `uri`
+| `"http://example.org/Alice"`
+| String
+
+| `name`
+| `"Alice@en"`
+| String (language tag appended)
+
+| `birthDate`
+| `neo4j.time.Date(1990, 6, 15)`
+| Date
+
+| `height`
+| `1.7`
+| Float
+
+| `active`
+| `true`
+| Boolean
+
+| `score`
+| `42`
+| Integer
+|===
+
+== See Also
+
+* xref:neo4jstoreconfig.adoc[Store Configuration] — full reference for all `Neo4jStoreConfig` parameters.
+* xref:examples.adoc[Examples] — end-to-end import examples.

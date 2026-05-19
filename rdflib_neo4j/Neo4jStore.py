@@ -19,7 +19,7 @@ class Neo4jStore(Store):
 
     context_aware = True
 
-    def __init__(self, config: Neo4jStoreConfig, neo4j_driver: Driver = None):
+    def __init__(self, config: Neo4jStoreConfig, neo4j_driver: Driver | None = None):
         self.__open = False
         self.driver = neo4j_driver
         self.session = None
@@ -258,13 +258,17 @@ class Neo4jStore(Store):
         self.__store_current_subject_rels()
 
     def __create_current_subject(self, subject):
-        uri = bnode_to_uri(subject) if isinstance(subject, BNode) else subject
-        return Neo4jTriple(uri=uri,
-                           prefixes={value: key for key, value in self.config.get_prefixes().items()},
-                           # Reversing the Prefix dictionary
-                           handle_vocab_uri_strategy=self.handle_vocab_uri_strategy,
-                           handle_multival_strategy=self.handle_multival_strategy,
-                           multival_props_names=self.multival_props_predicates)
+        return Neo4jTriple(
+            uri=bnode_to_uri(subject) if isinstance(subject, BNode) else subject,
+            prefixes={value: key for key, value in self.config.get_prefixes().items()},
+            # Reversing the Prefix dictionary
+            handle_vocab_uri_strategy=self.handle_vocab_uri_strategy,
+            handle_multival_strategy=self.handle_multival_strategy,
+            multival_props_names=self.multival_props_predicates,
+            keep_lang_tag=self.config.keep_lang_tag,
+            keep_custom_data_types=self.config.keep_custom_data_types,
+            language_filter=self.config.language_filter,
+        )
 
     def __check_current_subject(self, subject):
         """
