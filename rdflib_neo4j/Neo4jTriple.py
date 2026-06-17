@@ -156,7 +156,7 @@ class Neo4jTriple:
         # Getting a property
         if isinstance(object, Literal):
             # Neo4j Python driver does not support decimal params
-            value = float(object.toPython()) if type(object.toPython()) == Decimal else object.toPython()
+            value = float(object.toPython()) if isinstance(object.toPython(), Decimal) else object.toPython()
             prop_name = self.handle_vocab_uri(mappings, predicate)
 
             # If at least a name is defined and the predicate is one of the properties defined by the user
