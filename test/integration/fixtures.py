@@ -81,10 +81,12 @@ def neo4j_connection_parameters(neo4j_container):
             'pwd': os.getenv("NEO4J_PWD_LOCAL")
         }
     else:
+        # NEO4J_ADMIN_PASSWORD was removed in testcontainers 4.x; fall back to instance attribute
+        pwd = getattr(Neo4jContainer, "NEO4J_ADMIN_PASSWORD", None) or neo4j_container.password
         auth_data = {'uri': neo4j_container.get_connection_url(),
                      'database': RDFLIB_DB,
                      'user': "neo4j",
-                     'pwd': Neo4jContainer.NEO4J_ADMIN_PASSWORD}
+                     'pwd': pwd}
     return auth_data
 
 
