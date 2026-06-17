@@ -61,7 +61,7 @@ class NodeQueryComposer:
             str: The Neo4j query.
         """
 
-        q = f''' UNWIND $params as param MERGE (n:Resource{{ uri : param["uri"] }}) '''
+        q = ''' UNWIND $params as param MERGE (n:Resource{ uri : param["uri"] }) '''
         if self.labels:
             q += f'''SET {', '.join([f"""n:`{label}`""" for label in self.labels])} '''
         if self.props or self.multi_props:

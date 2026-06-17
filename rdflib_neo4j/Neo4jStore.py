@@ -131,7 +131,7 @@ class Neo4jStore(Store):
         self.__flushBuffer(commit_nodes, commit_rels)
 
     def remove(self, triple, context=None, txn=None):
-        raise NotImplemented("This is a streamer so it doesn't preserve the state, there is no removal feature.")
+        raise NotImplementedError("This is a streamer so it doesn't preserve the state, there is no removal feature.")
 
     def __close_on_error(self):
         """
@@ -172,7 +172,6 @@ class Neo4jStore(Store):
         This function initializes the driver and session based on the provided configuration.
 
         """
-        auth_data = self.config.auth_data
         self.session = self.__get_driver().session(
             default_access_mode=WRITE_ACCESS
         )

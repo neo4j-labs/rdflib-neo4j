@@ -1,0 +1,13 @@
+# Ruff configuration for rdflib-neo4j.
+#
+# Integration test modules import pytest fixtures by name
+# (e.g. `from test.integration.fixtures import neo4j_driver, graph_store`)
+# and then receive them as test-function arguments. Ruff cannot model
+# pytest's fixture injection, so it reports these as:
+#   F401 — imported but unused (the import is required for fixture discovery)
+#   F811 — redefinition       (the function parameter shadows the import)
+# Both are false positives for this pattern, so they are ignored for the
+# integration test package only. Source code is linted with the full default
+# rule set.
+[lint.per-file-ignores]
+"test/integration/*" = ["F401", "F811"]
