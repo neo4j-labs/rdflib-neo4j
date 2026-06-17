@@ -25,7 +25,7 @@ class RelationshipQueryComposer:
             props: The properties to add.
         """
         self.props.update(props)
-        raise NotImplemented("TO WORK ON THIS, WE NEED TEST DATA")
+        raise NotImplementedError("TO WORK ON THIS, WE NEED TEST DATA")
 
     def add_query_param(self, from_node, to_node):
         """
@@ -45,13 +45,13 @@ class RelationshipQueryComposer:
         Returns:
             str: The Neo4j query.
         """
-        q = f''' UNWIND $params as param 
-                 MERGE (from:Resource{{ uri : param["from"] }}) 
-                 MERGE (to:Resource{{ uri : param["to"] }})
+        q = ''' UNWIND $params as param 
+                 MERGE (from:Resource{ uri : param["from"] }) 
+                 MERGE (to:Resource{ uri : param["to"] })
              '''
         q += f''' MERGE (from)-[r:`{self.rel_type}`]->(to)'''
         if self.props:
-            raise NotImplemented
+            raise NotImplementedError
             # q += f'''SET {', '.join([f"""r.`{prop}` = coalesce(param["{prop}"],null)""" for prop in self.props])}'''
         return q
 
