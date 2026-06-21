@@ -1,0 +1,307 @@
+= Cypher 25 DSL
+
+link:https://colab.research.google.com/github/neo4j-labs/rdflib-neo4j/blob/main/examples/cypher_dsl_demo.ipynb[image:https://colab.research.google.com/assets/colab-badge.svg[Open In Colab]]
+
+`rdflib_neo4j/sparql/cypher_builder.py` is a typed Python builder for Cypher 25 queries.
+It is **internal infrastructure** — consumed by the SPARQL-to-Cypher transpiler (upcoming PR) and not part of the public rdflib-neo4j API.
+
+== What it is
+
+The DSL represents every part of a Cypher 25 query as a concrete Python type.
+Building a query means assembling instances of these types; no string templating is involved until `render()` is called.
+`render()` returns a two-tuple: the complete Cypher string (always prefixed with `CYPHER 25`) and a `params` dictionary of bound values.
+
+All runtime values are bound through the parameter mechanism — `CypherQuery.add_param(value)` returns a `Parameter` object whose `_cypher()` renders as `$pN`.
+This ensures that generated queries are safe and that Neo4j can plan them efficiently.
+
+== Quick start
+
+[source,python]
+----
+from rdflib_neo4j.sparql.cypher_builder import (
+    CypherQuery, NodePattern, Var, PropertyAccess, Property,
+    Comparison, OrderItem, AliasExpression,
+)
+
+q = CypherQuery()
+min_age = q.add_param(18)                          # Parameter → $p0
+
+name_prop = Property("Person", "name")
+age_prop  = Property("Person", "age")
+n = Var("n")
+
+cypher, params = (
+    q.match(NodePattern(n, ["Person"]))
+     .where(Comparison(PropertyAccess(n, age_prop), ">=", min_age))
+     .return_(
+         AliasExpression(PropertyAccess(n, name_prop), "name"),
+         order_by=[OrderItem(PropertyAccess(n, age_prop), ascending=False)],
+         limit=10,
+     )
+     .render()
+)
+
+print(cypher)
+# CYPHER 25
+# MATCH (n:Person)
+# WHERE n.age >= $p0
+# RETURN n.name AS name
+# ORDER BY n.age DESC
+# LIMIT 10
+
+print(params)
+# {'p0': 18}
+----
+
+== Key concepts
+
+=== Expressions vs Predicates
+
+The type hierarchy has two main branches:
+
+`Expression`::
+A value-producing node: a variable (`Var`), a property access (`PropertyAccess`), a function call (`FunctionCall`), a string literal (`StringLiteral`), a case expression (`CaseExpression`), and so on.
+Expressions are used in `WITH` and `RETURN` item lists, as arguments to function calls, and as the operands of comparisons.
+
+`Predicate(Expression)`::
+A boolean-valued expression for use in `WHERE` slots.
+Predicates support fluent composition: `p1.and_(p2)`, `p1.or_(p2)`, `p.not_()`.
+Concrete types include `Comparison`, `AndPredicate`, `OrPredicate`, `NotPredicate`, `IsNull`, `IsNotNull`, `InPredicate`, `IsTypePredicate`, `ExistsExpression`, and `NotExistsExpression`.
+
+`Pattern`::
+A structural type used in `MATCH` clauses: `NodePattern`, `AnonNode`, `PathPattern`, `QPPPattern`.
+Both `NodePattern` and `AnonNode` are also `Expression` subtypes so they can embed in f-strings.
+
+Both `Expression` and `Pattern` implement `__str__` and `__format__`, which means they interpolate directly into Python f-strings.
+This is the idiomatic way to embed typed objects in raw string patterns passed to `match()`:
+
+[source,python]
+----
+uri_param = q.add_param("http://example.org/Alice")
+q.match(f"(n:Resource {{uri: {uri_param}}})")
+# MATCH (n:Resource {uri: $p0})
+----
+
+=== Clauses
+
+A `CypherQuery` is an ordered list of `Clause` objects.
+Each clause knows how to render itself as one or more Cypher lines.
+
+[cols="1,3"]
+|===
+| Clause | Renders as
+
+| `MatchClause`
+| `MATCH pattern [WHERE predicate]`
+
+| `WhereClause`
+| Standalone `WHERE predicate` between reading clauses
+
+| `UnwindClause`
+| `UNWIND expr AS var` — used for SPARQL `VALUES` translation
+
+| `CallClause`
+| `CALL (imports) { inner }` — correlated subquery (inner join)
+
+| `OptionalCallClause`
+| `OPTIONAL CALL (imports) { inner }` — correlated subquery (left join)
+
+| `WithClause`
+| `WITH [DISTINCT] items [ORDER BY] [SKIP] [LIMIT] [WHERE]`
+
+| `ReturnClause`
+| `RETURN [DISTINCT] items [ORDER BY] [SKIP] [LIMIT]`
+|===
+
+The fluent builder methods (`match`, `where`, `call`, `optional_call`, `unwind`, `with_`, `return_`, `union`) append clauses and return `self` so calls chain.
+
+=== The `render()` method
+
+`CypherQuery.render()` is idempotent.
+It collects all clause lines, prepends `CYPHER 25`, and returns `(cypher_str, params_dict)`.
+
+Child queries created with `q.subquery()` share the root query's parameter namespace.
+`add_param()` anywhere in the tree allocates from the same counter and writes to the same dict, so a single `render()` call on the root produces the complete params for the whole query tree.
+
+Subquery expressions (`ExistsExpression`, `CountExpression`, `CollectExpression`, `NotExistsExpression`) and call clauses (`CallClause`, `OptionalCallClause`) embed a child `CypherQuery` inline using a compact single-line body form.
+
+== Class reference
+
+[cols="1,3,1"]
+|===
+| Class | Purpose | Renders as
+
+| `NodePattern`
+| Labelled anchor node (requires at least one label).
+Accepts `list[str]` or a `LabelExpr` for Cypher 25 boolean label predicates.
+| `(n:Person {age: $p0})`
+
+| `AnonNode`
+| Intermediate or anonymous node (labels optional).
+Used inside path chains and QPP inner patterns.
+| `()` / `(m)` / `(m WHERE ...)`
+
+| `PathPattern`
+| Ordered chain of nodes and relationship segments.
+Extend with `.rel(RelSegment, target)` or `.rel(QPPPattern, target)`.
+| `(a)-[:KNOWS]->(b)`
+
+| `RelSegment`
+| One relationship hop: direction, types, optional var/props/WHERE, optional hops quantifier.
+| `-[:KNOWS*1..]->`
+
+| `QPPPattern`
+| Quantified Path Pattern wrapping a `PathPattern` with `{min,max}`.
+| `((n)-[:R]->(m)){1,}`
+
+| `FunctionCall`
+| Any Cypher built-in or APOC function. Supports `distinct=True` for aggregates.
+| `count(DISTINCT n)` / `toLower(n.name)`
+
+| `Comparison`
+| `left op right` predicate. `op` is any Cypher comparison operator string.
+| `n.age >= $p0`
+
+| `AndPredicate` / `OrPredicate`
+| Boolean conjunction / disjunction. Constructed via `.and_()` / `.or_()` or directly.
+`OrPredicate` wraps each operand in parentheses to preserve precedence.
+| `p1 AND p2` / `(p1) OR (p2)`
+
+| `CaseExpression`
+| `CASE WHEN c THEN r ... [ELSE e] END`. Maps SPARQL `IF` and multi-branch conditionals.
+| `CASE WHEN n.age >= $p0 THEN "adult" ELSE "minor" END`
+
+| `AliasExpression`
+| `expr AS alias` — used in `WITH` and `RETURN` item lists.
+| `n.name AS name`
+
+| `OrderItem`
+| `expr [ASC\|DESC]` — used in `order_by` lists for `WithClause` and `ReturnClause`.
+| `n.age DESC`
+
+| `IsTypePredicate`
+| Cypher 25 type check: `expr IS :: TypeExpr`. Maps SPARQL `DATATYPE(?x) = xsd:T`.
+| `n.value IS :: INTEGER`
+
+| `LabelAtom` / `LabelAnd` / `LabelOr` / `LabelNot`
+| Cypher 25 boolean label predicates. Compose with `&`, `\|`, `~` Python operators.
+| `Person&Admin` / `(Person\|Admin)` / `!Robot`
+|===
+
+== Worked example: multi-clause query
+
+The following builds a query that finds active `Person` nodes, groups them by age bracket, and returns each bracket with a count — using the full clause pipeline and subquery expressions.
+
+[source,python]
+----
+from rdflib_neo4j.sparql.cypher_builder import (
+    CypherQuery, NodePattern, Var, PropertyAccess, Property,
+    Comparison, FunctionCall, AliasExpression, OrderItem,
+    CaseExpression, WhenClause, StringLiteral, WithClause,
+)
+
+q = CypherQuery()
+
+# Parameters
+min_age  = q.add_param(0)   # $p0 — lower bound (filter out negatives)
+thresh   = q.add_param(40)  # $p1 — age bracket threshold
+
+n    = Var("n")
+name = Property("Person", "name")
+age  = Property("Person", "age")
+
+bracket = CaseExpression(
+    WhenClause(
+        Comparison(PropertyAccess(n, age), ">=", thresh),
+        StringLiteral("senior"),
+    ),
+    else_=StringLiteral("junior"),
+)
+
+cypher, params = (
+    q.match(NodePattern(n, ["Person"]))
+     .where(Comparison(PropertyAccess(n, age), ">", min_age))
+     .with_(
+         AliasExpression(bracket, "bracket"),
+         AliasExpression(PropertyAccess(n, name), "name"),
+     )
+     .return_(
+         AliasExpression(FunctionCall("count", Var("name")), "total"),
+         "bracket",
+         distinct=False,
+         order_by=[OrderItem(Var("bracket"))],
+     )
+     .render()
+)
+
+print(cypher)
+# CYPHER 25
+# MATCH (n:Person)
+# WHERE n.age > $p0
+# WITH CASE WHEN n.age >= $p1 THEN "senior" ELSE "junior" END AS bracket, n.name AS name
+# RETURN count(name) AS total, bracket
+# ORDER BY bracket ASC
+
+print(params)
+# {'p0': 0, 'p1': 40}
+----
+
+=== Subquery expressions
+
+EXISTS / NOT EXISTS / COUNT / COLLECT subqueries are built by calling factory methods on the root query, passing a child query created via `subquery()`:
+
+[source,python]
+----
+q = CypherQuery()
+uri = q.add_param("http://example.org/Alice")
+
+inner = q.subquery()
+inner.match(f"(n)-[:KNOWS]->(friend)")
+
+cypher, params = (
+    q.match(f"(n:Person {{uri: {uri}}})")
+     .where(q.exists_subquery(inner))
+     .return_("n.name AS name")
+     .render()
+)
+
+print(cypher)
+# CYPHER 25
+# MATCH (n:Person {uri: $p0})
+# WHERE EXISTS { MATCH (n)-[:KNOWS]->(friend) }
+# RETURN n.name AS name
+----
+
+=== Label expressions (Cypher 25)
+
+Boolean label predicates compose with Python operators on `LabelAtom`:
+
+[source,python]
+----
+from rdflib_neo4j.sparql.cypher_builder import (
+    CypherQuery, NodePattern, Var, LabelAtom,
+)
+
+person = LabelAtom("Person")
+admin  = LabelAtom("Admin")
+robot  = LabelAtom("Robot")
+
+n = Var("n")
+# (person | admin) & ~robot → (Person|Admin)&!Robot
+label = (person | admin) & ~robot
+
+q = CypherQuery()
+cypher, _ = q.match(NodePattern(n, label)).return_("n").render()
+
+print(cypher)
+# CYPHER 25
+# MATCH (n:(Person|Admin)&!Robot)
+# RETURN n
+----
+
+== Relationship to the transpiler
+
+This DSL is the code-generation target for the SPARQL-to-Cypher transpiler being developed in `feat/61-sparql-transpiler`.
+The transpiler walks rdflib's SPARQL algebra AST and emits `CypherQuery` objects; the DSL's `render()` produces the final Cypher string and parameter dict that are passed to the Neo4j driver.
+
+The `findings/sparql-to-cypher.md` file in this repository contains the complete SPARQL algebra to Cypher 25 mapping reference with worked examples.
