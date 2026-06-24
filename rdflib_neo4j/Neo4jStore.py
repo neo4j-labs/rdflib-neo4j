@@ -7,6 +7,7 @@ import logging
 
 from rdflib_neo4j.Neo4jTriple import Neo4jTriple
 from rdflib_neo4j.config.Neo4jStoreConfig import Neo4jStoreConfig
+from rdflib_neo4j.cache import BoundedNodeCache
 from rdflib_neo4j.config.const import NEO4J_DRIVER_USER_AGENT_NAME
 from rdflib_neo4j.config.utils import check_auth_data
 from rdflib_neo4j.query_composers.NodeQueryComposer import NodeQueryComposer
@@ -71,6 +72,7 @@ class Neo4jStore(Store):
             self.commit(commit_nodes=True)
             self.commit(commit_rels=True)
         self.session.close()
+        self._node_cache.clear()
         self.__set_open(False)
         print(f"IMPORTED {self.total_triples} TRIPLES")
         self.total_triples=0
@@ -144,6 +146,7 @@ class Neo4jStore(Store):
             node_buffer.empty_query_params()
         for rel_buffer in self.rel_buffer.values():
             rel_buffer.empty_query_params()
+        self._node_cache.clear()
 
     def __set_open(self, val: bool):
         """
@@ -215,6 +218,9 @@ class Neo4jStore(Store):
                 """)
 
     def __store_current_subject_props(self):
+        # Skip node buffer update if this URI was already flushed this session
+        if self._node_cache.contains(str(self.current_subject.uri)):
+            return
         """
         Stores the properties of the current subject in the respective node buffer.
 
@@ -277,10 +283,12 @@ class Neo4jStore(Store):
         """
         if self.current_subject is None:
             self.current_subject = self.__create_current_subject(subject)
+            self._node_cache.add(str(subject))
         else:
             normalized = bnode_to_uri(subject) if isinstance(subject, BNode) else subject
             if self.current_subject.uri != normalized:
                 self.__store_current_subject()
+                self._node_cache.add(str(normalized))
                 self.current_subject = self.__create_current_subject(subject)
 
     def __len__(self, context=None):
