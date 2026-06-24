@@ -46,6 +46,8 @@ class Neo4jStore(Store):
         self.handle_vocab_uri_strategy = config.handle_vocab_uri_strategy
         self.handle_multival_strategy = config.handle_multival_strategy
         self.multival_props_predicates = config.multival_props_names
+        self._dynamic_ns_map: dict = {}   # namespace_uri -> "nsN" prefix
+        self._dynamic_ns_counter: list = [0]  # mutable counter (passed by ref to utils)
 
     def open(self, configuration, create=True):
         """
@@ -263,7 +265,9 @@ class Neo4jStore(Store):
                            # Reversing the Prefix dictionary
                            handle_vocab_uri_strategy=self.handle_vocab_uri_strategy,
                            handle_multival_strategy=self.handle_multival_strategy,
-                           multival_props_names=self.multival_props_predicates)
+                           multival_props_names=self.multival_props_predicates,
+                           dynamic_ns_map=self._dynamic_ns_map,
+                           dynamic_ns_counter=self._dynamic_ns_counter)
 
     def __check_current_subject(self, subject):
         """

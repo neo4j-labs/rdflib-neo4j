@@ -11,9 +11,11 @@ This object is used to configure the Neo4j Store to connect to your Neo4j Instan
 | batch_size | Integer | False | (5000) | An integer representing the batch size (The batch size is intended as number of entities to store inside the database (nodes/relationships) and not triples.
 | custom_mappings | List[Tuple[Str,Str,Str]] | False | Empty list | A list of tuples containing custom mappings for prefixes in the form (prefix, object_to_replace, new_object).
 | custom_prefixes | Dictionary | True ① | ({}) | A dictionary containing custom prefixes.  
-| handle_vocab_uri_strategy | HANDLE_VOCAB_URI_STRATEGY | False |IGNORE, KEEP, MAP, (SHORTEN) |
+| handle_vocab_uri_strategy | HANDLE_VOCAB_URI_STRATEGY | False |IGNORE, KEEP, MAP, SHORTEN, (SHORTEN_STRICT) |
 
-* 'SHORTEN',  full uris are shortened using prefixes for property names, relationship names and labels. Fails if a prefix is not predefined for a namespace in the imported RDF.
+* 'SHORTEN_STRICT', full URIs are shortened using prefixes for property names, relationship names and labels. Raises `ShortenStrictException` if a prefix is not predefined for a namespace in the imported RDF. Requires `custom_prefixes` to be set for all namespaces used.
+
+* 'SHORTEN', full URIs are shortened using prefixes where defined; unknown namespaces are assigned auto-generated `ns0__`, `ns1__`, ... prefixes (matching n10s semantics). Does not require pre-declared prefixes.
 
 * 'IGNORE' uris are ignored and only local names are kept
 
@@ -28,7 +30,7 @@ This object is used to configure the Neo4j Store to connect to your Neo4j Instan
 | multival_props_names | List[Tuple[Str,Str]] | False | ([]) | A list of tuples containing the prefix and property names to be treated as multivalued in the form (prefix, property_name).
 |===
 
-① if handle_vocab_uri_strategy ==  HANDLE_VOCAB_URI_STRATEGY.SHORTEN
+① if handle_vocab_uri_strategy == HANDLE_VOCAB_URI_STRATEGY.SHORTEN_STRICT
 
 == Functions
 
@@ -200,15 +202,91 @@ Enum class defining different strategies for handling vocabulary URIs.
 
 |===
 | Name | Description
-| SHORTEN | Strategy to shorten the URIs (Every prefix that you will use must be defined in the config, otherwise Neo4jStore will throw a ShortenStrictException)
+| SHORTEN_STRICT | Shortens URIs using pre-declared prefixes only. Every prefix must be defined in the config; raises `ShortenStrictException` for any namespace not registered.
+| SHORTEN | Dynamic shortening. Uses pre-declared prefixes where available; auto-generates `ns0__`, `ns1__`, ... prefixes for unknown namespaces (matching n10s semantics). No pre-declared prefixes required.
 | MAP | Strategy to map the URIs using provided mappings
 | KEEP | Strategy to keep the URIs
 | IGNORE | Strategy to ignore the Namespace and get only the local part
 |===
 
-=== Shorten
+=== SHORTEN_STRICT
 
-This strategy will shorten the URIs, replacing the prefix with its shorted version. If the Store find a prefix not defined inside its Neo4jStoreConfig object, the parsing will stop, raising a ShortenStrictException error.
+This strategy shortens URIs by replacing each namespace with its pre-declared prefix alias. If the store encounters a namespace that is not registered in `Neo4jStoreConfig`, parsing stops immediately with a `ShortenStrictException`. Use this strategy when you want strict control over the namespace-to-prefix mapping and prefer an explicit failure over silent auto-generation.
+
+Example — `http://xmlns.com/foaf/0.1/name` with prefix `foaf` declared → stored as `foaf__name`. Same URI without `foaf` declared → raises `ShortenStrictException`.
+
+=== SHORTEN
+
+This strategy (dynamic shorten) shortens URIs using pre-declared prefixes where available. For any namespace that has not been declared, a new prefix of the form `ns0`, `ns1`, `ns2`, ... is automatically assigned and reused for the same namespace throughout the import session. This matches the default n10s (`neosemantics`) behaviour and ensures that every URI is always shortened, regardless of whether its namespace was pre-declared.
+
+Example — `http://xmlns.com/foaf/0.1/name` with prefix `foaf` declared → `foaf__name`. An unknown namespace `http://example.org/custom/` → `ns0__myProperty` (first unknown namespace encountered).
+
+=== Comparing SHORTEN_STRICT and SHORTEN
+
+[source,python]
+----
+from rdflib import Graph, Namespace
+from rdflib_neo4j import Neo4jStoreConfig, Neo4jStore, HANDLE_VOCAB_URI_STRATEGY
+
+FOAF = Namespace("http://xmlns.com/foaf/0.1/")
+CUSTOM = Namespace("http://example.org/custom/")
+
+# SHORTEN_STRICT — only pre-declared namespaces work
+config_strict = Neo4jStoreConfig(
+    auth_data={"uri": "bolt://localhost:7687", "database": "neo4j",
+               "user": "neo4j", "pwd": "password"},
+    custom_prefixes={"foaf": str(FOAF)},   # FOAF is declared
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN_STRICT
+)
+# foaf:name  → stored as "foaf__name"          (declared prefix)
+# custom:id  → raises ShortenStrictException   (namespace not declared)
+
+# SHORTEN (dynamic) — unknown namespaces get auto-generated prefixes
+config_dynamic = Neo4jStoreConfig(
+    auth_data={"uri": "bolt://localhost:7687", "database": "neo4j",
+               "user": "neo4j", "pwd": "password"},
+    custom_prefixes={"foaf": str(FOAF)},   # FOAF is declared (optional)
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN
+)
+# foaf:name   → stored as "foaf__name"  (declared prefix used)
+# custom:id   → stored as "ns0__id"     (first auto-generated prefix)
+# custom:tag  → stored as "ns0__tag"    (same namespace reuses ns0)
+# other:prop  → stored as "ns1__prop"   (second unknown namespace)
+----
+
+NOTE: The auto-generated `nsN` prefixes are session-local. They are not persisted in the database. If you reload data in a later session, a different namespace may receive the same `nsN` alias. Declare explicit `custom_prefixes` for stable, reproducible property names.
+
+=== Migration from version 1.1 and earlier
+
+Before version 1.2, the only shortening strategy was called `SHORTEN`. It had *strict* behaviour — it failed with a `ShortenStrictException` when encountering an undeclared namespace.
+
+In version 1.2 the names were aligned with n10s semantics:
+
+* The old strict `SHORTEN` → **`SHORTEN_STRICT`** (same behaviour, new name)
+* A new dynamic **`SHORTEN`** mode was introduced (auto-generates `nsN` prefixes for unknown namespaces)
+
+For backward compatibility, existing code that references `HANDLE_VOCAB_URI_STRATEGY.SHORTEN` will continue to run. However, the behaviour has changed: it now uses the dynamic mode instead of the strict mode. To preserve the original strict behaviour, update your code:
+
+[source,python]
+----
+# Before version 1.2
+config = Neo4jStoreConfig(
+    ...,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN
+)
+
+# After version 1.2 — strict behaviour (equivalent to the old SHORTEN)
+config = Neo4jStoreConfig(
+    ...,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN_STRICT
+)
+
+# After version 1.2 — dynamic behaviour (new default for SHORTEN)
+config = Neo4jStoreConfig(
+    ...,
+    handle_vocab_uri_strategy=HANDLE_VOCAB_URI_STRATEGY.SHORTEN
+)
+----
 
 === Map
 vocabulary element mappings are applied on import.
