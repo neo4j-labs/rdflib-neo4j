@@ -1,6 +1,8 @@
 <img src="https://raw.githubusercontent.com/RDFLib/rdflib/master/docs/_static/RDFlib.png" height="75"> <img src="https://guides.neo4j.com/rdf/n10s.png" height="75">
 
 # rdflib-neo4j
+
+> This is an experimental Neo4j Labs project and not part of Neo4j's supported product lineup. See the [Neo4j Labs disclaimer](./LABS_DISCLAIMER.txt).
 RDFLib Store backed by neo4j!
 
 
